@@ -1,6 +1,7 @@
+import 'main.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -13,11 +14,18 @@ class _ProfilePageState extends State<ProfilePage> {
   String _userName = 'Loading...';
   String _userEmail = 'Loading...';
   bool _isLoading = false;
+  bool _bioEnabled = false;
 
   @override
   void initState() {
     super.initState();
     _fetchUserData();
+    _loadBioSetting();
+  }
+
+  Future<void> _loadBioSetting() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() => _bioEnabled = prefs.getBool('bio_enabled') ?? false);
   }
 
   void _fetchUserData() {
@@ -34,20 +42,25 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Future<void> _logout() async {
     setState(() => _isLoading = true);
+
     try {
       await Supabase.instance.client.auth.signOut();
+
       if (!mounted) return;
-      
-      // Navigate back to login and remove all previous screens
-      // Navigator.pushAndRemoveUntil(
-      //   context,
-      //   MaterialPageRoute(builder: (context) => const LoginPage()),
-      //   (route) => false,
-      // );
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginPage()),
+        (route) => false,
+      );
     } catch (e) {
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error logging out: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Error logging out: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -62,7 +75,9 @@ class _ProfilePageState extends State<ProfilePage> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           title: const Text('Change Name'),
           content: Form(
             key: formKey,
@@ -70,9 +85,12 @@ class _ProfilePageState extends State<ProfilePage> {
               controller: nameController,
               decoration: InputDecoration(
                 hintText: 'Enter new name',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
-              validator: (value) => value!.isEmpty ? 'Name cannot be empty' : null,
+              validator: (value) =>
+                  value!.isEmpty ? 'Name cannot be empty' : null,
             ),
           ),
           actions: [
@@ -89,7 +107,9 @@ class _ProfilePageState extends State<ProfilePage> {
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF634DFF),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
               child: const Text('Save', style: TextStyle(color: Colors.white)),
             ),
@@ -105,17 +125,23 @@ class _ProfilePageState extends State<ProfilePage> {
       await Supabase.instance.client.auth.updateUser(
         UserAttributes(data: {'full_name': newName}),
       );
-      
+
       if (!mounted) return;
       setState(() => _userName = newName);
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Name updated successfully!'), backgroundColor: Colors.green),
+        const SnackBar(
+          content: Text('Name updated successfully!'),
+          backgroundColor: Colors.green,
+        ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating name: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Error updating name: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -131,7 +157,9 @@ class _ProfilePageState extends State<ProfilePage> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
               title: const Text('Change Password'),
               content: Form(
                 key: formKey,
@@ -140,16 +168,23 @@ class _ProfilePageState extends State<ProfilePage> {
                   obscureText: obscure,
                   decoration: InputDecoration(
                     hintText: 'Enter new password',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     suffixIcon: IconButton(
-                      icon: Icon(obscure ? Icons.visibility_off : Icons.visibility),
+                      icon: Icon(
+                        obscure ? Icons.visibility_off : Icons.visibility,
+                      ),
                       onPressed: () => setDialogState(() => obscure = !obscure),
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) return 'Enter a password';
-                    if (value.length < 6) return 'Must be at least 6 characters';
-                    if (!RegExp(r'\d').hasMatch(value)) return 'Must contain a number';
+                    if (value == null || value.isEmpty)
+                      return 'Enter a password';
+                    if (value.length < 6)
+                      return 'Must be at least 6 characters';
+                    if (!RegExp(r'\d').hasMatch(value))
+                      return 'Must contain a number';
                     return null;
                   },
                 ),
@@ -157,7 +192,10 @@ class _ProfilePageState extends State<ProfilePage> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: Colors.grey),
+                  ),
                 ),
                 ElevatedButton(
                   onPressed: () async {
@@ -168,13 +206,18 @@ class _ProfilePageState extends State<ProfilePage> {
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF634DFF),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
-                  child: const Text('Update', style: TextStyle(color: Colors.white)),
+                  child: const Text(
+                    'Update',
+                    style: TextStyle(color: Colors.white),
+                  ),
                 ),
               ],
             );
-          }
+          },
         );
       },
     );
@@ -186,15 +229,21 @@ class _ProfilePageState extends State<ProfilePage> {
       await Supabase.instance.client.auth.updateUser(
         UserAttributes(password: newPassword),
       );
-      
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Password updated successfully!'), backgroundColor: Colors.green),
+        const SnackBar(
+          content: Text('Password updated successfully!'),
+          backgroundColor: Colors.green,
+        ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating password: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Error updating password: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -208,94 +257,152 @@ class _ProfilePageState extends State<ProfilePage> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        title: const Text('Profile', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+        title: const Text(
+          'Profile',
+          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+        ),
         centerTitle: true,
       ),
-      body: _isLoading 
-        ? const Center(child: CircularProgressIndicator(color: Color(0xFF634DFF)))
-        : SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              children: [
-                // Profile Header
-                Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: Colors.grey.withOpacity(0.1)),
-                  ),
-                  child: Column(
-                    children: [
-                      CircleAvatar(
-                        radius: 40,
-                        backgroundColor: const Color(0xFF634DFF).withOpacity(0.1),
-                        child: Text(
-                          _userName.isNotEmpty ? _userName[0].toUpperCase() : 'U',
-                          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Color(0xFF634DFF)),
+      body: _isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF634DFF)),
+            )
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                children: [
+                  // Profile Header
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: Colors.grey.withOpacity(0.1)),
+                    ),
+                    child: Column(
+                      children: [
+                        CircleAvatar(
+                          radius: 40,
+                          backgroundColor: const Color(
+                            0xFF634DFF,
+                          ).withOpacity(0.1),
+                          child: Text(
+                            _userName.isNotEmpty
+                                ? _userName[0].toUpperCase()
+                                : 'U',
+                            style: const TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF634DFF),
+                            ),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(_userName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 4),
-                      Text(_userEmail, style: const TextStyle(color: Colors.grey, fontSize: 14)),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 32),
-
-                // Settings Section
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('Account Settings', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(height: 16),
-                
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.grey.withOpacity(0.1)),
-                  ),
-                  child: Column(
-                    children: [
-                      _buildSettingsTile(
-                        icon: Icons.person_outline,
-                        title: 'Change Name',
-                        onTap: _showChangeNameDialog,
-                      ),
-                      const Divider(height: 1, indent: 56),
-                      _buildSettingsTile(
-                        icon: Icons.lock_outline,
-                        title: 'Change Password',
-                        onTap: _showChangePasswordDialog,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 40),
-
-                // Logout Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 56,
-                  child: OutlinedButton.icon(
-                    onPressed: _logout,
-                    icon: const Icon(Icons.logout, color: Colors.red),
-                    label: const Text('Log Out', style: TextStyle(color: Colors.red, fontSize: 16, fontWeight: FontWeight.bold)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.red, width: 2),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        const SizedBox(height: 16),
+                        Text(
+                          _userName,
+                          style: const TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _userEmail,
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 32),
+
+                  // Settings Section
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Account Settings',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.withOpacity(0.1)),
+                    ),
+                    child: Column(
+                      children: [
+                        _buildSettingsTile(
+                          icon: Icons.person_outline,
+                          title: 'Change Name',
+                          onTap: _showChangeNameDialog,
+                        ),
+                        const Divider(height: 1, indent: 56),
+                        _buildSettingsTile(
+                          icon: Icons.lock_outline,
+                          title: 'Change Password',
+                          onTap: _showChangePasswordDialog,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 40),
+
+                  SwitchListTile(
+                    title: const Text("Enable Biometrics for Quick Login"),
+                    secondary: const Icon(Icons.fingerprint),
+                    value: _bioEnabled,
+                    onChanged: (value) async {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setBool('bio_enabled', value);
+
+                      setState(() {
+                        _bioEnabled = value;
+                      });
+                    },
+                  ),
+
+                  // Logout Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: OutlinedButton.icon(
+                      onPressed: _logout,
+                      icon: const Icon(Icons.logout, color: Colors.red),
+                      label: const Text(
+                        'Log Out',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.red, width: 2),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
     );
   }
 
-  Widget _buildSettingsTile({required IconData icon, required String title, required VoidCallback onTap}) {
+  Widget _buildSettingsTile({
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+  }) {
     return ListTile(
       leading: Container(
         padding: const EdgeInsets.all(8),

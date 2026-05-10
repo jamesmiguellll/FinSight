@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:screen_protector/screen_protector.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:flutter/services.dart';
+
 //import 'package:shared_preferences/shared_preferences.dart';
 import 'dashboard.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> main() async {
   // Ensure Flutter bindings are initialized before doing async work
@@ -13,13 +14,14 @@ Future<void> main() async {
   // Initialize Supabase
   await Supabase.initialize(
     url: 'https://sssuoadxrnekkvbinxhp.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNzc3VvYWR4cm5la2t2YmlueGhwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1NjE4NTcsImV4cCI6MjA5MjEzNzg1N30.GDB4B45xg9IuV-fFarsM3jwt_NWGpmXpp2Zm7RQXUOM',
+    anonKey:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNzc3VvYWR4cm5la2t2YmlueGhwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY1NjE4NTcsImV4cCI6MjA5MjEzNzg1N30.GDB4B45xg9IuV-fFarsM3jwt_NWGpmXpp2Zm7RQXUOM',
   );
 
   // 2. TURN ON PRIVACY PROTECTIONS
   // This blocks the user (and background apps) from taking screenshots
   await ScreenProtector.preventScreenshotOn();
-  
+
   // This turns the screen black/white or blurs it in the app switcher
   await ScreenProtector.protectDataLeakageOn();
 
@@ -66,7 +68,8 @@ class _LoginPageState extends State<LoginPage> {
   final LocalAuthentication auth = LocalAuthentication();
 
   // Rate limiting variables
-  final Map<String, int> _failedAttempts = {}; // Track failed attempts per email
+  final Map<String, int> _failedAttempts =
+      {}; // Track failed attempts per email
   final Map<String, DateTime> _lockoutTime = {}; // Track lockout time per email
   static const int _maxAttempts = 3;
   static const Duration _lockoutDuration = Duration(minutes: 3);
@@ -75,71 +78,69 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void initState() {
     super.initState();
-    _checkBiometrics();
+    _checkBiometricAvailability();
   }
 
-  Future<void> _checkBiometrics() async {
+  Future<void> _signInWithGoogle() async {
     try {
-      bool canCheckBiometrics = await auth.canCheckBiometrics;
-      bool isDeviceSupported = await auth.isDeviceSupported();
-      setState(() {
-        _isBiometricAvailable = canCheckBiometrics && isDeviceSupported;
-      });
-      
-      // If biometrics available, trigger authentication immediately
-      if (canCheckBiometrics && isDeviceSupported && mounted) {
-        await Future.delayed(const Duration(milliseconds: 500)); // Small delay for better UX
-        _authenticateWithBiometrics('', 'User');
-      }
+      await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: 'io.supabase.finsight://login-callback',
+      );
     } catch (e) {
-      print('Error checking biometrics: $e');
+      debugPrint("Google sign-in error: $e");
     }
   }
 
-  Future<void> _authenticateWithBiometrics(String storedEmail, String storedUserName) async {
+  Future<void> _authenticateWithBiometrics(
+    String email,
+    String userName,
+  ) async {
     try {
-      bool authenticated = await auth.authenticate(
-        localizedReason: 'Scan your fingerprint to log into FinSight',
+      final authenticated = await auth.authenticate(
+        localizedReason: 'Use fingerprint to unlock app',
       );
 
-      if (authenticated && mounted) {
-        // If biometric successful and user has stored email, sign in with stored credentials
-        try {
-          final AuthResponse res = await Supabase.instance.client.auth.signInWithPassword(
-            email: storedEmail,
-            password: '', // Placeholder - in production, you'd securely store the password
-          );
+      if (!authenticated) return;
 
-          if (res.user != null && mounted) {
-            // Get actual username from user metadata
-            final userName = (res.user?.userMetadata?['full_name'] as String?) ?? storedUserName;
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => HomePage(userName: userName),
-              ),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Biometric sign-in failed: $e'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        }
-      }
-    } on PlatformException catch (e) {
-      if (mounted) {
+      final session = Supabase.instance.client.auth.currentSession;
+
+      if (session == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Biometric error: ${e.message}'),
+          const SnackBar(
+            content: Text("No saved session. Please login manually first."),
             backgroundColor: Colors.red,
           ),
         );
+        return;
       }
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => HomePage(userName: userName)),
+      );
+    } catch (e) {
+      debugPrint("Biometric error: $e");
+    }
+  }
+
+  Future<void> _checkBiometricAvailability() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final enabled = prefs.getBool('bio_enabled') ?? false;
+
+      final canCheck = await auth.canCheckBiometrics;
+      final supported = await auth.isDeviceSupported();
+
+      if (!mounted) return;
+
+      setState(() {
+        _isBiometricAvailable = enabled && canCheck && supported;
+      });
+    } catch (e) {
+      debugPrint("Biometric check error: $e");
     }
   }
 
@@ -212,14 +213,21 @@ class _LoginPageState extends State<LoginPage> {
                     color: const Color(0xFF634DFF),
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  child: const Icon(Icons.bar_chart, color: Colors.white, size: 40),
+                  child: const Icon(
+                    Icons.bar_chart,
+                    color: Colors.white,
+                    size: 40,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 const Text(
                   'FinSight',
                   style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
                 ),
-                const Text('Sign in to your account', style: TextStyle(color: Colors.grey)),
+                const Text(
+                  'Sign in to your account',
+                  style: TextStyle(color: Colors.grey),
+                ),
                 const SizedBox(height: 32),
 
                 // Email Field
@@ -228,10 +236,13 @@ class _LoginPageState extends State<LoginPage> {
                   controller: _emailController, // Attach controller
                   decoration: InputDecoration(
                     hintText: 'you@example.com',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) return 'Please enter your email';
+                    if (value == null || value.isEmpty)
+                      return 'Please enter your email';
                     return null;
                   },
                 ),
@@ -244,14 +255,20 @@ class _LoginPageState extends State<LoginPage> {
                   obscureText: _obscureText,
                   decoration: InputDecoration(
                     hintText: 'Enter your password',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     suffixIcon: IconButton(
-                      icon: Icon(_obscureText ? Icons.visibility_off : Icons.visibility),
-                      onPressed: () => setState(() => _obscureText = !_obscureText),
+                      icon: Icon(
+                        _obscureText ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscureText = !_obscureText),
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) return 'Please enter your password';
+                    if (value == null || value.isEmpty)
+                      return 'Please enter your password';
                     return null;
                   },
                 ),
@@ -265,7 +282,8 @@ class _LoginPageState extends State<LoginPage> {
                       children: [
                         Checkbox(
                           value: _rememberMe,
-                          onChanged: (value) => setState(() => _rememberMe = value!),
+                          onChanged: (value) =>
+                              setState(() => _rememberMe = value!),
                         ),
                         const Text('Remember me'),
                       ],
@@ -274,10 +292,15 @@ class _LoginPageState extends State<LoginPage> {
                       onPressed: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => const ForgotPasswordPage()),
+                          MaterialPageRoute(
+                            builder: (context) => const ForgotPasswordPage(),
+                          ),
                         );
                       },
-                      child: const Text('Forgot password?', style: TextStyle(color: Color(0xFF634DFF))),
+                      child: const Text(
+                        'Forgot password?',
+                        style: TextStyle(color: Color(0xFF634DFF)),
+                      ),
                     ),
                   ],
                 ),
@@ -318,38 +341,76 @@ class _LoginPageState extends State<LoginPage> {
 
                         try {
                           // 4. Send credentials to Supabase
-                          final AuthResponse res = await Supabase.instance.client.auth.signInWithPassword(
-                            email: email,
-                            password: _passwordController.text,
-                          );
+                          final AuthResponse res = await Supabase
+                              .instance
+                              .client
+                              .auth
+                              .signInWithPassword(
+                                email: email,
+                                password: _passwordController.text,
+                              );
 
                           // If successful, go to Dashboard
-                          if (res.user != null) {
-                            _resetFailedAttempts(email);
-
-                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                            
-                            // Pass the email they just typed into the Verification Page
+                          if (res.user != null && mounted) {
+                            _resetFailedAttempts(
+                              email,
+                            ); // Reset on successful login
+                            ScaffoldMessenger.of(
+                              context,
+                            ).hideCurrentSnackBar(); // Hide loading
+                            // Get username from user metadata
+                            final userName =
+                                (res.user?.userMetadata?['full_name']
+                                    as String?) ??
+                                email.split('@').first;
                             Navigator.pushReplacement(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => VerificationPage(email: _emailController.text.trim()),
+                                builder: (context) =>
+                                    HomePage(userName: userName),
                               ),
                             );
                           }
                         } on AuthException catch (e) {
+                          if (e.message.toLowerCase().contains(
+                            'email not confirmed',
+                          )) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Please verify your email to continue.',
+                                ),
+                                backgroundColor: Colors.orange,
+                              ),
+                            );
+
+                            // Send them to finish verifying
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => VerificationPage(
+                                  email: _emailController.text.trim(),
+                                ),
+                              ),
+                            );
+                            return; // Stop running the rest of the error code
+                          }
+
                           // Record failed attempt
                           _recordFailedAttempt(email);
-                          final remainingAttempts = _maxAttempts - (_failedAttempts[email] ?? 0);
+                          final remainingAttempts =
+                              _maxAttempts - (_failedAttempts[email] ?? 0);
 
                           // Handle incorrect password or user not found
                           if (mounted) {
                             String errorMessage = e.message;
-                            
+
                             if (_isAccountLocked(email)) {
-                              errorMessage = 'Account locked due to too many failed attempts. Try again in 3 minutes.';
+                              errorMessage =
+                                  'Account locked due to too many failed attempts. Try again in 3 minutes.';
                             } else if (remainingAttempts > 0) {
-                              errorMessage = '${e.message} (${remainingAttempts} attempts remaining)';
+                              errorMessage =
+                                  '${e.message} (${remainingAttempts} attempts remaining)';
                             }
 
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -376,9 +437,14 @@ class _LoginPageState extends State<LoginPage> {
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF634DFF),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    child: const Text('Sign in', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    child: const Text(
+                      'Sign in',
+                      style: TextStyle(color: Colors.white, fontSize: 18),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -400,7 +466,9 @@ class _LoginPageState extends State<LoginPage> {
                             } else {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
-                                  content: Text('Please enter your email first'),
+                                  content: Text(
+                                    'Please enter your email first',
+                                  ),
                                   backgroundColor: Colors.orange,
                                 ),
                               );
@@ -410,7 +478,9 @@ class _LoginPageState extends State<LoginPage> {
                           label: const Text('Sign in with Fingerprint'),
                           style: OutlinedButton.styleFrom(
                             side: const BorderSide(color: Color(0xFF634DFF)),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                         ),
                       ),
@@ -424,7 +494,10 @@ class _LoginPageState extends State<LoginPage> {
                     Expanded(child: Divider()),
                     Padding(
                       padding: EdgeInsets.symmetric(horizontal: 16),
-                      child: Text('Or continue with', style: TextStyle(color: Colors.grey)),
+                      child: Text(
+                        'Or continue with',
+                        style: TextStyle(color: Colors.grey),
+                      ),
                     ),
                     Expanded(child: Divider()),
                   ],
@@ -434,9 +507,10 @@ class _LoginPageState extends State<LoginPage> {
                 // Social Login Buttons
                 Row(
                   children: [
-                    Expanded(child: _socialButton('Google', Icons.g_mobiledata)),
+                    Expanded(
+                      child: _socialButton('Google', Icons.g_mobiledata),
+                    ),
                     const SizedBox(width: 16),
-                    Expanded(child: _socialButton('GitHub', Icons.code)),
                   ],
                 ),
                 const SizedBox(height: 32),
@@ -450,12 +524,17 @@ class _LoginPageState extends State<LoginPage> {
                       onTap: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => const SignUpPage()),
+                          MaterialPageRoute(
+                            builder: (context) => const SignUpPage(),
+                          ),
                         );
                       },
                       child: const Text(
                         'Sign up',
-                        style: TextStyle(color: Color(0xFF634DFF), fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          color: Color(0xFF634DFF),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ],
@@ -493,7 +572,7 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 // -----------------------------------------------------------------
-// SIGN UP PAGE 
+// SIGN UP PAGE
 // -----------------------------------------------------------------
 class SignUpPage extends StatefulWidget {
   const SignUpPage({super.key});
@@ -513,26 +592,6 @@ class _SignUpPageState extends State<SignUpPage> {
   bool _agreedToTerms = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
-  bool _hasMinLength = false;
-  bool _hasNumber = false;
-  bool _hasSpecialChar = false;
-  bool _hasUppercase = false; 
-  bool _hasLowercase = false; 
-
-  @override
-  void initState() {
-    super.initState();
-    _passwordController.addListener(() {
-      final password = _passwordController.text;
-      setState(() {
-        _hasMinLength = password.length >= 6;
-        _hasNumber = RegExp(r'\d').hasMatch(password);
-        _hasSpecialChar = RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password);
-        _hasUppercase = RegExp(r'[A-Z]').hasMatch(password);
-        _hasLowercase = RegExp(r'[a-z]').hasMatch(password);
-      });
-    });
-  }
 
   // 2. Dispose of them to prevent memory leaks
   @override
@@ -562,14 +621,21 @@ class _SignUpPageState extends State<SignUpPage> {
                     color: const Color(0xFF634DFF),
                     borderRadius: BorderRadius.circular(16),
                   ),
-                  child: const Icon(Icons.bar_chart, color: Colors.white, size: 40),
+                  child: const Icon(
+                    Icons.bar_chart,
+                    color: Colors.white,
+                    size: 40,
+                  ),
                 ),
                 const SizedBox(height: 16),
                 const Text(
                   'FinSight',
                   style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
                 ),
-                const Text('Create your account', style: TextStyle(color: Colors.grey)),
+                const Text(
+                  'Create your account',
+                  style: TextStyle(color: Colors.grey),
+                ),
                 const SizedBox(height: 32),
 
                 // Username Field
@@ -578,9 +644,12 @@ class _SignUpPageState extends State<SignUpPage> {
                   controller: _nameController, // 3. Attach controller
                   decoration: InputDecoration(
                     hintText: 'Enter your username',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
-                  validator: (value) => value!.isEmpty ? 'Please enter your name' : null,
+                  validator: (value) =>
+                      value!.isEmpty ? 'Please enter your name' : null,
                 ),
                 const SizedBox(height: 20),
 
@@ -590,11 +659,15 @@ class _SignUpPageState extends State<SignUpPage> {
                   controller: _emailController, // 3. Attach controller
                   decoration: InputDecoration(
                     hintText: 'you@example.com',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) return 'Please enter an email';
-                    if (!value.contains('@')) return 'Please enter a valid email';
+                    if (value == null || value.isEmpty)
+                      return 'Please enter an email';
+                    if (!value.contains('@'))
+                      return 'Please enter a valid email';
                     return null;
                   },
                 ),
@@ -607,34 +680,30 @@ class _SignUpPageState extends State<SignUpPage> {
                   obscureText: _obscurePassword,
                   decoration: InputDecoration(
                     hintText: 'Enter your password',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     suffixIcon: IconButton(
-                      icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                      onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
                     ),
                   ),
-                
-
                   validator: (value) {
-                    // Update the validator to include the new rules
-                    if (!_hasMinLength || !_hasNumber || !_hasSpecialChar || !_hasUppercase || !_hasLowercase) {
-                      return 'Please meet all password requirements';
-                    }
+                    if (value == null || value.isEmpty)
+                      return 'Please enter a password';
+                    if (value.length < 6)
+                      return 'Password must be at least 6 characters';
+                    if (!RegExp(r'\d').hasMatch(value))
+                      return 'Must contain a number';
+                    if (!RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(value))
+                      return 'Must contain a special character';
                     return null;
                   },
-                ),
-                
-                const SizedBox(height: 8),
-                // The Live Checklist
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildRequirement('At least 6 characters', _hasMinLength),
-                    _buildRequirement('Contains an uppercase letter', _hasUppercase), // NEW
-                    _buildRequirement('Contains a lowercase letter', _hasLowercase), // NEW
-                    _buildRequirement('Contains a number', _hasNumber),
-                    _buildRequirement('Contains a special character', _hasSpecialChar),
-                  ],
                 ),
                 const SizedBox(height: 20),
 
@@ -644,15 +713,26 @@ class _SignUpPageState extends State<SignUpPage> {
                   obscureText: _obscureConfirmPassword,
                   decoration: InputDecoration(
                     hintText: 'Confirm your password',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     suffixIcon: IconButton(
-                      icon: Icon(_obscureConfirmPassword ? Icons.visibility_off : Icons.visibility),
-                      onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                      icon: Icon(
+                        _obscureConfirmPassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () => setState(
+                        () =>
+                            _obscureConfirmPassword = !_obscureConfirmPassword,
+                      ),
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) return 'Please confirm your password';
-                    if (value != _passwordController.text) return 'Passwords do not match';
+                    if (value == null || value.isEmpty)
+                      return 'Please confirm your password';
+                    if (value != _passwordController.text)
+                      return 'Passwords do not match';
                     return null;
                   },
                 ),
@@ -667,7 +747,8 @@ class _SignUpPageState extends State<SignUpPage> {
                       width: 24,
                       child: Checkbox(
                         value: _agreedToTerms,
-                        onChanged: (value) => setState(() => _agreedToTerms = value!),
+                        onChanged: (value) =>
+                            setState(() => _agreedToTerms = value!),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -677,9 +758,21 @@ class _SignUpPageState extends State<SignUpPage> {
                           style: TextStyle(color: Colors.black87, height: 1.4),
                           children: [
                             TextSpan(text: 'I agree to the '),
-                            TextSpan(text: 'Terms of Service', style: TextStyle(color: Color(0xFF634DFF), fontWeight: FontWeight.w500)),
+                            TextSpan(
+                              text: 'Terms of Service',
+                              style: TextStyle(
+                                color: Color(0xFF634DFF),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                             TextSpan(text: ' and '),
-                            TextSpan(text: 'Privacy Policy', style: TextStyle(color: Color(0xFF634DFF), fontWeight: FontWeight.w500)),
+                            TextSpan(
+                              text: 'Privacy Policy',
+                              style: TextStyle(
+                                color: Color(0xFF634DFF),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -688,7 +781,6 @@ class _SignUpPageState extends State<SignUpPage> {
                 ),
                 const SizedBox(height: 24),
 
-               
                 SizedBox(
                   width: double.infinity,
                   height: 56,
@@ -696,56 +788,83 @@ class _SignUpPageState extends State<SignUpPage> {
                     onPressed: () async {
                       // Validate form and check terms checkbox
                       if (_formKey.currentState!.validate() && _agreedToTerms) {
-                        
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Creating your account...')),
+                          const SnackBar(
+                            content: Text('Creating your account...'),
+                          ),
                         );
 
                         try {
                           // 4. Send the controller data to Supabase
-                          final AuthResponse res = await Supabase.instance.client.auth.signUp(
+                          final AuthResponse
+                          res = await Supabase.instance.client.auth.signUp(
                             email: _emailController.text.trim(),
                             password: _passwordController.text.trim(),
                             // Optional: You can pass the Full Name in the user metadata
-                            data: {'full_name': _nameController.text.trim()}, 
+                            data: {'full_name': _nameController.text.trim()},
                           );
 
                           // If successful, navigate to the Dashboard
                           if (res.user != null && mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Account Created! Welcome!'), backgroundColor: Colors.green,),
+                              const SnackBar(
+                                content: Text('Account Created! Welcome!'),
+                                backgroundColor: Colors.green,
+                              ),
                             );
                             Navigator.pushReplacement(
                               context,
-                              MaterialPageRoute(builder: (context) => HomePage(userName: _nameController.text)), 
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    HomePage(userName: _nameController.text),
+                              ),
                             );
                           }
                         } on AuthException catch (e) {
                           // Catch Supabase specific errors (like "User already exists")
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('User already exists $e'), backgroundColor: Colors.red),
+                              SnackBar(
+                                content: Text('User already exists $e'),
+                                backgroundColor: Colors.red,
+                              ),
                             );
                           }
                         } catch (e) {
                           // Catch any other unexpected errors
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('An error occurred: $e'), backgroundColor: Colors.red),
+                              SnackBar(
+                                content: Text('An error occurred: $e'),
+                                backgroundColor: Colors.red,
+                              ),
                             );
                           }
                         }
                       } else if (!_agreedToTerms) {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Please agree to the Terms of Service')),
+                          const SnackBar(
+                            content: Text(
+                              'Please agree to the Terms of Service',
+                            ),
+                          ),
                         );
                       }
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF634DFF),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    child: const Text('Create account', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                    child: const Text(
+                      'Create account',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 24),
@@ -756,7 +875,10 @@ class _SignUpPageState extends State<SignUpPage> {
                     Expanded(child: Divider()),
                     Padding(
                       padding: EdgeInsets.symmetric(horizontal: 16),
-                      child: Text('Or continue with', style: TextStyle(color: Colors.grey)),
+                      child: Text(
+                        'Or continue with',
+                        style: TextStyle(color: Colors.grey),
+                      ),
                     ),
                     Expanded(child: Divider()),
                   ],
@@ -764,9 +886,10 @@ class _SignUpPageState extends State<SignUpPage> {
                 const SizedBox(height: 24),
                 Row(
                   children: [
-                    Expanded(child: _socialButton('Google', Icons.g_mobiledata)),
+                    Expanded(
+                      child: _socialButton('Google', Icons.g_mobiledata),
+                    ),
                     const SizedBox(width: 16),
-                    Expanded(child: _socialButton('GitHub', Icons.code)),
                   ],
                 ),
                 const SizedBox(height: 32),
@@ -778,7 +901,10 @@ class _SignUpPageState extends State<SignUpPage> {
                       onTap: () => Navigator.pop(context),
                       child: const Text(
                         'Sign in',
-                        style: TextStyle(color: Color(0xFF634DFF), fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          color: Color(0xFF634DFF),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ],
@@ -797,31 +923,6 @@ class _SignUpPageState extends State<SignUpPage> {
       child: Padding(
         padding: const EdgeInsets.only(bottom: 8.0),
         child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-      ),
-    );
-  }
-
-  Widget _buildRequirement(String text, bool isMet) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8.0),
-      child: Row(
-        children: [
-          Icon(
-            isMet ? Icons.check_circle : Icons.radio_button_unchecked,
-            color: isMet ? Colors.green : Colors.grey,
-            size: 18,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            text,
-            style: TextStyle(
-              color: isMet ? Colors.black87 : Colors.grey,
-              fontSize: 13,
-              // Optional: strike through the text when completed
-              decoration: isMet ? TextDecoration.lineThrough : null, 
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -882,10 +983,14 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     color: const Color(0xFF634DFF).withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.lock_reset, color: Color(0xFF634DFF), size: 40),
+                  child: const Icon(
+                    Icons.lock_reset,
+                    color: Color(0xFF634DFF),
+                    size: 40,
+                  ),
                 ),
                 const SizedBox(height: 24),
-                
+
                 // Titles
                 const Text(
                   'Reset Password',
@@ -901,17 +1006,24 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 // Email Field
                 const Padding(
                   padding: EdgeInsets.only(bottom: 8.0),
-                  child: Text('Email address', style: TextStyle(fontWeight: FontWeight.w600)),
+                  child: Text(
+                    'Email address',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ),
                 TextFormField(
                   controller: _emailController,
                   decoration: InputDecoration(
                     hintText: 'you@example.com',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty) return 'Please enter your email';
-                    if (!value.contains('@')) return 'Please enter a valid email';
+                    if (value == null || value.isEmpty)
+                      return 'Please enter your email';
+                    if (!value.contains('@'))
+                      return 'Please enter a valid email';
                     return null;
                   },
                 ),
@@ -924,17 +1036,19 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                   child: ElevatedButton(
                     onPressed: () async {
                       if (_formKey.currentState!.validate()) {
-                        
                         // Show loading indicator
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Sending reset link...')),
+                          const SnackBar(
+                            content: Text('Sending reset link...'),
+                          ),
                         );
 
                         try {
                           // Tell Supabase to send the reset email
-                          await Supabase.instance.client.auth.resetPasswordForEmail(
-                            _emailController.text.trim(),
-                          );
+                          await Supabase.instance.client.auth
+                              .resetPasswordForEmail(
+                                _emailController.text.trim(),
+                              );
 
                           if (!mounted) return;
 
@@ -942,30 +1056,46 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           ScaffoldMessenger.of(context).hideCurrentSnackBar();
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text('Password reset link sent! Check your inbox.'),
+                              content: Text(
+                                'Password reset link sent! Check your inbox.',
+                              ),
                               backgroundColor: Colors.green,
                             ),
                           );
                           Navigator.pop(context); // Return to Login Page
-                          
                         } on AuthException catch (e) {
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+                            SnackBar(
+                              content: Text(e.message),
+                              backgroundColor: Colors.red,
+                            ),
                           );
                         } catch (e) {
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+                            SnackBar(
+                              content: Text('Error: $e'),
+                              backgroundColor: Colors.red,
+                            ),
                           );
                         }
                       }
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF634DFF),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                    child: const Text('Send Reset Link', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                    child: const Text(
+                      'Send Reset Link',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -996,9 +1126,26 @@ class _VerificationPageState extends State<VerificationPage> {
     super.dispose();
   }
 
+  // Helper function to mask the email (e.g., ja***es@gmail.com)
+  String _getMaskedEmail(String email) {
+    final parts = email.split('@');
+    if (parts.length != 2) return email;
+
+    final name = parts[0];
+    final domain = parts[1];
+
+    if (name.length <= 2) {
+      return '${name[0]}***@$domain';
+    }
+
+    final maskedName =
+        '${name.substring(0, 2)}***${name.substring(name.length - 1)}';
+    return '$maskedName@$domain';
+  }
+
   Future<void> _verifyCode() async {
     final code = _codeController.text.trim();
-    
+
     if (code.length != 6) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter the 6-digit code')),
@@ -1018,18 +1165,24 @@ class _VerificationPageState extends State<VerificationPage> {
 
       if (!mounted) return;
 
-      // If successful, Supabase automatically logs them in!
+      // If successful, navigate to Dashboard
       if (res.session != null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Email verified! Welcome to FinSight.'), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text('Email verified! Welcome to FinSight.'),
+            backgroundColor: Colors.green,
+          ),
         );
-        
-        // Push to Dashboard and clear history
-        // Navigator.pushAndRemoveUntil(
-        //   context,
-        //   MaterialPageRoute(builder: (context) => const HomePage()),
-        //   (route) => false,
-        // );
+
+        final userName =
+            (res.user?.userMetadata?['full_name'] as String?) ??
+            widget.email.split('@').first;
+
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => HomePage(userName: userName)),
+          (route) => false,
+        );
       }
     } on AuthException catch (e) {
       if (!mounted) return;
@@ -1054,12 +1207,18 @@ class _VerificationPageState extends State<VerificationPage> {
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('A new code has been sent to your email.'), backgroundColor: Colors.green),
+        const SnackBar(
+          content: Text('A new code has been sent to your email.'),
+          backgroundColor: Colors.green,
+        ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error resending code: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Error resending code: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -1086,17 +1245,28 @@ class _VerificationPageState extends State<VerificationPage> {
                   color: const Color(0xFF634DFF).withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.mark_email_read, color: Color(0xFF634DFF), size: 48),
+                child: const Icon(
+                  Icons.mark_email_read,
+                  color: Color(0xFF634DFF),
+                  size: 48,
+                ),
               ),
               const SizedBox(height: 24),
-              
+
               // Titles
-              const Text('Verify your email', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+              const Text(
+                'Verify your email',
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 8),
               Text(
-                'We sent a 6-digit code to\n${widget.email}',
+                'We sent a 6-digit code to\n${_getMaskedEmail(widget.email)}',
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.grey, height: 1.5, fontSize: 16),
+                style: const TextStyle(
+                  color: Colors.grey,
+                  height: 1.5,
+                  fontSize: 16,
+                ),
               ),
               const SizedBox(height: 40),
 
@@ -1106,19 +1276,27 @@ class _VerificationPageState extends State<VerificationPage> {
                 keyboardType: TextInputType.number,
                 maxLength: 6,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 16),
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 16,
+                ),
                 decoration: InputDecoration(
-                  counterText: "", // Hides the "0/6" character counter
+                  counterText: "", // Hides the character counter
                   hintText: '000000',
                   hintStyle: TextStyle(color: Colors.grey.withOpacity(0.3)),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
-                    borderSide: const BorderSide(color: Color(0xFF634DFF), width: 2),
+                    borderSide: const BorderSide(
+                      color: Color(0xFF634DFF),
+                      width: 2,
+                    ),
                   ),
                 ),
                 onChanged: (value) {
-                  // Auto-submit when they type the 6th digit
                   if (value.length == 6) {
                     _verifyCode();
                   }
@@ -1134,11 +1312,20 @@ class _VerificationPageState extends State<VerificationPage> {
                   onPressed: _isLoading ? null : _verifyCode,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF634DFF),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
-                  child: _isLoading 
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : const Text('Verify Account', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  child: _isLoading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text(
+                          'Verify Account',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(height: 24),
@@ -1147,10 +1334,19 @@ class _VerificationPageState extends State<VerificationPage> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text("Didn't receive the code? ", style: TextStyle(color: Colors.grey)),
+                  const Text(
+                    "Didn't receive the code? ",
+                    style: TextStyle(color: Colors.grey),
+                  ),
                   GestureDetector(
                     onTap: _resendCode,
-                    child: const Text('Resend', style: TextStyle(color: Color(0xFF634DFF), fontWeight: FontWeight.bold)),
+                    child: const Text(
+                      'Resend',
+                      style: TextStyle(
+                        color: Color(0xFF634DFF),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
                 ],
               ),

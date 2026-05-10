@@ -37,6 +37,7 @@ dependencies:
   supabase_flutter: ^2.12.4
   screen_protector: ^1.5.1
   local_auth: ^3.0.1
+  shared_preferences: ^2.2.3
 
 dev_dependencies:
   flutter_test:
