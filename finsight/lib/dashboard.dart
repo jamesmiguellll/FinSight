@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'profile.dart';
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -13,12 +14,46 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
 
+
+Widget _buildDashboardView() {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildHeader(),
+          const SizedBox(height: 24),
+          _buildQuickActions(),
+          const SizedBox(height: 32),
+          _buildSpendingInsights(),
+          const SizedBox(height: 32),
+          _buildRecentTransactions(),
+          const SizedBox(height: 32),
+          _buildBudgetProgress(),
+          const SizedBox(height: 40), // Bottom padding
+        ],
+      ),
+    );
+  }
+
+
+
+
   @override
   Widget build(BuildContext context) {
+    // This list holds the screens for your bottom navigation
+    final List<Widget> screens = [
+      _buildDashboardView(), // Index 0: Home
+      const Center(child: Text('Analytics Coming Soon')), // Index 1: Analytics
+      const Center(child: Text('Budget Coming Soon')), // Index 2: Budget
+      const ProfilePage(), // Index 3: Profile!
+    ];
+
+    
+
     return Scaffold(
       backgroundColor: const Color(0xFFFAFAFA),
       
-      // 1. Custom Bottom Navigation Bar
+      // Keep your floating action button exactly the same
       floatingActionButton: FloatingActionButton(
         onPressed: () {},
         backgroundColor: const Color(0xFF634DFF),
@@ -26,6 +61,8 @@ class _HomePageState extends State<HomePage> {
         child: const Icon(Icons.add, color: Colors.white, size: 32),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      
+      // Keep your bottom navigation bar exactly the same
       bottomNavigationBar: BottomAppBar(
         shape: const CircularNotchedRectangle(),
         notchMargin: 8.0,
@@ -45,24 +82,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
 
-      // 2. Main Scrollable Body
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(),
-            const SizedBox(height: 24),
-            _buildQuickActions(),
-            const SizedBox(height: 32),
-            _buildSpendingInsights(),
-            const SizedBox(height: 32),
-            _buildRecentTransactions(),
-            const SizedBox(height: 32),
-            _buildBudgetProgress(),
-            const SizedBox(height: 40), // Bottom padding
-          ],
-        ),
-      ),
+      body: screens[_currentIndex], 
     );
   }
 

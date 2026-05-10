@@ -324,14 +324,17 @@ class _LoginPageState extends State<LoginPage> {
                           );
 
                           // If successful, go to Dashboard
-                          if (res.user != null && mounted) {
-                            _resetFailedAttempts(email); // Reset on successful login
-                            ScaffoldMessenger.of(context).hideCurrentSnackBar(); // Hide loading
-                            // Get username from user metadata
-                            final userName = (res.user?.userMetadata?['full_name'] as String?) ?? email.split('@').first;
+                          if (res.user != null) {
+                            _resetFailedAttempts(email);
+
+                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                            
+                            // Pass the email they just typed into the Verification Page
                             Navigator.pushReplacement(
                               context,
-                              MaterialPageRoute(builder: (context) => HomePage(userName: userName)),
+                              MaterialPageRoute(
+                                builder: (context) => VerificationPage(email: _emailController.text.trim()),
+                              ),
                             );
                           }
                         } on AuthException catch (e) {
@@ -510,6 +513,26 @@ class _SignUpPageState extends State<SignUpPage> {
   bool _agreedToTerms = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _hasMinLength = false;
+  bool _hasNumber = false;
+  bool _hasSpecialChar = false;
+  bool _hasUppercase = false; 
+  bool _hasLowercase = false; 
+
+  @override
+  void initState() {
+    super.initState();
+    _passwordController.addListener(() {
+      final password = _passwordController.text;
+      setState(() {
+        _hasMinLength = password.length >= 6;
+        _hasNumber = RegExp(r'\d').hasMatch(password);
+        _hasSpecialChar = RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password);
+        _hasUppercase = RegExp(r'[A-Z]').hasMatch(password);
+        _hasLowercase = RegExp(r'[a-z]').hasMatch(password);
+      });
+    });
+  }
 
   // 2. Dispose of them to prevent memory leaks
   @override
@@ -590,13 +613,28 @@ class _SignUpPageState extends State<SignUpPage> {
                       onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                     ),
                   ),
+                
+
                   validator: (value) {
-                    if (value == null || value.isEmpty) return 'Please enter a password';
-                    if (value.length < 6) return 'Password must be at least 6 characters';
-                    if (!RegExp(r'\d').hasMatch(value)) return 'Must contain a number';
-                    if (!RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(value)) return 'Must contain a special character';
+                    // Update the validator to include the new rules
+                    if (!_hasMinLength || !_hasNumber || !_hasSpecialChar || !_hasUppercase || !_hasLowercase) {
+                      return 'Please meet all password requirements';
+                    }
                     return null;
                   },
+                ),
+                
+                const SizedBox(height: 8),
+                // The Live Checklist
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildRequirement('At least 6 characters', _hasMinLength),
+                    _buildRequirement('Contains an uppercase letter', _hasUppercase), // NEW
+                    _buildRequirement('Contains a lowercase letter', _hasLowercase), // NEW
+                    _buildRequirement('Contains a number', _hasNumber),
+                    _buildRequirement('Contains a special character', _hasSpecialChar),
+                  ],
                 ),
                 const SizedBox(height: 20),
 
@@ -763,6 +801,31 @@ class _SignUpPageState extends State<SignUpPage> {
     );
   }
 
+  Widget _buildRequirement(String text, bool isMet) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8.0),
+      child: Row(
+        children: [
+          Icon(
+            isMet ? Icons.check_circle : Icons.radio_button_unchecked,
+            color: isMet ? Colors.green : Colors.grey,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: TextStyle(
+              color: isMet ? Colors.black87 : Colors.grey,
+              fontSize: 13,
+              // Optional: strike through the text when completed
+              decoration: isMet ? TextDecoration.lineThrough : null, 
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _socialButton(String label, IconData icon) {
     return OutlinedButton.icon(
       onPressed: () {},
@@ -907,6 +970,191 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 ),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class VerificationPage extends StatefulWidget {
+  final String email;
+
+  const VerificationPage({super.key, required this.email});
+
+  @override
+  State<VerificationPage> createState() => _VerificationPageState();
+}
+
+class _VerificationPageState extends State<VerificationPage> {
+  final _codeController = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _verifyCode() async {
+    final code = _codeController.text.trim();
+    
+    if (code.length != 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter the 6-digit code')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      // Send the code to Supabase to verify
+      final AuthResponse res = await Supabase.instance.client.auth.verifyOTP(
+        type: OtpType.signup,
+        email: widget.email,
+        token: code,
+      );
+
+      if (!mounted) return;
+
+      // If successful, Supabase automatically logs them in!
+      if (res.session != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Email verified! Welcome to FinSight.'), backgroundColor: Colors.green),
+        );
+        
+        // Push to Dashboard and clear history
+        // Navigator.pushAndRemoveUntil(
+        //   context,
+        //   MaterialPageRoute(builder: (context) => const HomePage()),
+        //   (route) => false,
+        // );
+      }
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _resendCode() async {
+    try {
+      await Supabase.instance.client.auth.resend(
+        type: OtpType.signup,
+        email: widget.email,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A new code has been sent to your email.'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error resending code: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black),
+      ),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Icon
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF634DFF).withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.mark_email_read, color: Color(0xFF634DFF), size: 48),
+              ),
+              const SizedBox(height: 24),
+              
+              // Titles
+              const Text('Verify your email', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(
+                'We sent a 6-digit code to\n${widget.email}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.grey, height: 1.5, fontSize: 16),
+              ),
+              const SizedBox(height: 40),
+
+              // The Code Input Field
+              TextField(
+                controller: _codeController,
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, letterSpacing: 16),
+                decoration: InputDecoration(
+                  counterText: "", // Hides the "0/6" character counter
+                  hintText: '000000',
+                  hintStyle: TextStyle(color: Colors.grey.withOpacity(0.3)),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: const BorderSide(color: Color(0xFF634DFF), width: 2),
+                  ),
+                ),
+                onChanged: (value) {
+                  // Auto-submit when they type the 6th digit
+                  if (value.length == 6) {
+                    _verifyCode();
+                  }
+                },
+              ),
+              const SizedBox(height: 32),
+
+              // Verify Button
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  onPressed: _isLoading ? null : _verifyCode,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF634DFF),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: _isLoading 
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text('Verify Account', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Resend Link
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text("Didn't receive the code? ", style: TextStyle(color: Colors.grey)),
+                  GestureDetector(
+                    onTap: _resendCode,
+                    child: const Text('Resend', style: TextStyle(color: Color(0xFF634DFF), fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            ],
           ),
         ),
       ),
