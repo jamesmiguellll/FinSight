@@ -179,12 +179,15 @@ class _ProfilePageState extends State<ProfilePage> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty)
+                    if (value == null || value.isEmpty) {
                       return 'Enter a password';
-                    if (value.length < 6)
+                    }
+                    if (value.length < 6) {
                       return 'Must be at least 6 characters';
-                    if (!RegExp(r'\d').hasMatch(value))
+                    }
+                    if (!RegExp(r'\d').hasMatch(value)) {
                       return 'Must contain a number';
+                    }
                     return null;
                   },
                 ),
@@ -259,7 +262,10 @@ class _ProfilePageState extends State<ProfilePage> {
         elevation: 0,
         title: const Text(
           'Profile',
-          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: Color(0xFF634DFF),
+            fontWeight: FontWeight.bold,
+          ),
         ),
         centerTitle: true,
       ),

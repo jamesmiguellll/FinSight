@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:screen_protector/screen_protector.dart';
+//import 'package:screen_protector/screen_protector.dart';
 import 'package:local_auth/local_auth.dart';
-
-//import 'package:shared_preferences/shared_preferences.dart';
+//import 'package:url_launcher/url_launcher.dart';
 import 'dashboard.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'dart:async';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   // Ensure Flutter bindings are initialized before doing async work
@@ -20,10 +23,10 @@ Future<void> main() async {
 
   // 2. TURN ON PRIVACY PROTECTIONS
   // This blocks the user (and background apps) from taking screenshots
-  await ScreenProtector.preventScreenshotOn();
+  //await ScreenProtector.preventScreenshotOn();
 
   // This turns the screen black/white or blurs it in the app switcher
-  await ScreenProtector.protectDataLeakageOn();
+  // await ScreenProtector.protectDataLeakageOn();
 
   runApp(const MyApp());
 }
@@ -34,13 +37,72 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'FinSight',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF634DFF)),
         useMaterial3: true,
       ),
+      builder: (context, child) {
+        return UserInactivityWrapper(child: child!);
+      },
       home: const LoginPage(),
+    );
+  }
+}
+
+class UserInactivityWrapper extends StatefulWidget {
+  final Widget child;
+  const UserInactivityWrapper({super.key, required this.child});
+
+  @override
+  State<UserInactivityWrapper> createState() => _UserInactivityWrapperState();
+}
+
+class _UserInactivityWrapperState extends State<UserInactivityWrapper> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer();
+  }
+
+  void _startTimer() {
+    _timer?.cancel();
+    _timer = Timer(const Duration(minutes: 5), _handleInactivity);
+  }
+
+  void _handleInactivity() async {
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session != null) {
+      await Supabase.instance.client.auth.signOut();
+      navigatorKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginPage()),
+        (route) => false,
+      );
+    }
+  }
+
+  void _handleInteraction([_]) {
+    _startTimer();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: _handleInteraction,
+      onPointerMove: _handleInteraction,
+      onPointerUp: _handleInteraction,
+      behavior: HitTestBehavior.translucent,
+      child: widget.child,
     );
   }
 }
@@ -83,19 +145,59 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _signInWithGoogle() async {
     try {
-      await Supabase.instance.client.auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: 'io.supabase.finsight://login-callback',
+      const webClientId = 'YOUR_WEB_CLIENT_ID'; // Replace with your actual Web Client ID
+      const iosClientId = 'YOUR_IOS_CLIENT_ID'; // Replace with your actual iOS Client ID
+
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        clientId: iosClientId,
+        serverClientId: webClientId,
       );
+
+      final googleUser = await googleSignIn.signIn();
+      if (googleUser == null) {
+        return; // User canceled the sign-in
+      }
+
+      final googleAuth = await googleUser.authentication;
+      final accessToken = googleAuth.accessToken;
+      final idToken = googleAuth.idToken;
+
+      if (accessToken == null || idToken == null) {
+        throw 'No Access Token or ID Token found.';
+      }
+
+      final AuthResponse res = await Supabase.instance.client.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+        accessToken: accessToken,
+      );
+
+      if (mounted && res.user != null) {
+        final userName =
+            (res.user?.userMetadata?['full_name'] as String?) ??
+            res.user?.email?.split('@').first ??
+            'User';
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => HomePage(userName: userName)),
+        );
+      }
     } catch (e) {
       debugPrint("Google sign-in error: $e");
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Google sign-in failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
-  Future<void> _authenticateWithBiometrics(
-    String email,
-    String userName,
-  ) async {
+  Future<void> _authenticateWithBiometrics() async {
     try {
       final authenticated = await auth.authenticate(
         localizedReason: 'Use fingerprint to unlock app',
@@ -106,6 +208,7 @@ class _LoginPageState extends State<LoginPage> {
       final session = Supabase.instance.client.auth.currentSession;
 
       if (session == null) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text("No saved session. Please login manually first."),
@@ -116,6 +219,11 @@ class _LoginPageState extends State<LoginPage> {
       }
 
       if (!mounted) return;
+
+      final userName =
+          (session.user.userMetadata?['full_name'] as String?) ??
+          session.user.email?.split('@').first ??
+          'User';
 
       Navigator.pushReplacement(
         context,
@@ -139,6 +247,29 @@ class _LoginPageState extends State<LoginPage> {
       setState(() {
         _isBiometricAvailable = enabled && canCheck && supported;
       });
+
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session != null) {
+        if (_isBiometricAvailable) {
+          // Automatically prompt for fingerprint
+          _authenticateWithBiometrics();
+        } else {
+          // No biometrics required, skip login page
+          final userName =
+              (session.user.userMetadata?['full_name'] as String?) ??
+              session.user.email?.split('@').first ??
+              'User';
+
+          if (!mounted) return;
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => HomePage(userName: userName),
+            ),
+          );
+        }
+      }
     } catch (e) {
       debugPrint("Biometric check error: $e");
     }
@@ -241,8 +372,9 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty)
+                    if (value == null || value.isEmpty) {
                       return 'Please enter your email';
+                    }
                     return null;
                   },
                 ),
@@ -267,8 +399,9 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty)
+                    if (value == null || value.isEmpty) {
                       return 'Please enter your password';
+                    }
                     return null;
                   },
                 ),
@@ -352,9 +485,8 @@ class _LoginPageState extends State<LoginPage> {
 
                           // If successful, go to Dashboard
                           if (res.user != null && mounted) {
-                            _resetFailedAttempts(
-                              email,
-                            ); // Reset on successful login
+                            _resetFailedAttempts(email);
+
                             ScaffoldMessenger.of(
                               context,
                             ).hideCurrentSnackBar(); // Hide loading
@@ -390,6 +522,9 @@ class _LoginPageState extends State<LoginPage> {
                               MaterialPageRoute(
                                 builder: (context) => VerificationPage(
                                   email: _emailController.text.trim(),
+                                  userName: _emailController.text
+                                      .split('@')
+                                      .first,
                                 ),
                               ),
                             );
@@ -410,7 +545,7 @@ class _LoginPageState extends State<LoginPage> {
                                   'Account locked due to too many failed attempts. Try again in 3 minutes.';
                             } else if (remainingAttempts > 0) {
                               errorMessage =
-                                  '${e.message} (${remainingAttempts} attempts remaining)';
+                                  '${e.message} ($remainingAttempts attempts remaining)';
                             }
 
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -450,6 +585,7 @@ class _LoginPageState extends State<LoginPage> {
                 const SizedBox(height: 24),
 
                 // Biometric Authentication Button
+                // Biometric Authentication Button
                 if (_isBiometricAvailable)
                   Column(
                     children: [
@@ -457,23 +593,7 @@ class _LoginPageState extends State<LoginPage> {
                         width: double.infinity,
                         height: 56,
                         child: OutlinedButton.icon(
-                          onPressed: () {
-                            // For now, biometric auth requires email/username to be saved
-                            final email = _emailController.text.trim();
-                            final userName = email.split('@').first;
-                            if (email.isNotEmpty) {
-                              _authenticateWithBiometrics(email, userName);
-                            } else {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Please enter your email first',
-                                  ),
-                                  backgroundColor: Colors.orange,
-                                ),
-                              );
-                            }
-                          },
+                          onPressed: _authenticateWithBiometrics,
                           icon: const Icon(Icons.fingerprint, size: 24),
                           label: const Text('Sign in with Fingerprint'),
                           style: OutlinedButton.styleFrom(
@@ -487,7 +607,6 @@ class _LoginPageState extends State<LoginPage> {
                       const SizedBox(height: 24),
                     ],
                   ),
-
                 // Divider
                 const Row(
                   children: [
@@ -508,7 +627,11 @@ class _LoginPageState extends State<LoginPage> {
                 Row(
                   children: [
                     Expanded(
-                      child: _socialButton('Google', Icons.g_mobiledata),
+                      child: _socialButton(
+                        'Google',
+                        Image.asset('assets/google.png', height: 24, width: 24),
+                        _signInWithGoogle,
+                      ),
                     ),
                     const SizedBox(width: 16),
                   ],
@@ -557,10 +680,14 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  Widget _socialButton(String label, IconData icon) {
+  Widget _socialButton(
+    String label,
+    Widget iconWidget,
+    VoidCallback onPressed,
+  ) {
     return OutlinedButton.icon(
-      onPressed: () {},
-      icon: Icon(icon, color: Colors.black),
+      onPressed: onPressed,
+      icon: iconWidget, // We changed this to accept any Widget (like an Image)
       label: Text(label, style: const TextStyle(color: Colors.black)),
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -592,14 +719,89 @@ class _SignUpPageState extends State<SignUpPage> {
   bool _agreedToTerms = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  bool _hasMinLength = false;
+  bool _hasNumber = false;
+  bool _hasSpecialChar = false;
+  bool _hasUppercase = false;
+  bool _hasLowercase = false;
 
   // 2. Dispose of them to prevent memory leaks
+
+  @override
+  void initState() {
+    super.initState();
+    _passwordController.addListener(() {
+      final password = _passwordController.text;
+      setState(() {
+        _hasMinLength = password.length >= 6;
+        _hasNumber = RegExp(r'\d').hasMatch(password);
+        _hasSpecialChar = RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password);
+        _hasUppercase = RegExp(r'[A-Z]').hasMatch(password);
+        _hasLowercase = RegExp(r'[a-z]').hasMatch(password);
+      });
+    });
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _signInWithGoogle() async {
+    try {
+      const webClientId = 'YOUR_WEB_CLIENT_ID'; // Replace with your actual Web Client ID
+      const iosClientId = 'YOUR_IOS_CLIENT_ID'; // Replace with your actual iOS Client ID
+
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        clientId: iosClientId,
+        serverClientId: webClientId,
+      );
+
+      final googleUser = await googleSignIn.signIn();
+      if (googleUser == null) {
+        return; // User canceled the sign-in
+      }
+
+      final googleAuth = await googleUser.authentication;
+      final accessToken = googleAuth.accessToken;
+      final idToken = googleAuth.idToken;
+
+      if (accessToken == null || idToken == null) {
+        throw 'No Access Token or ID Token found.';
+      }
+
+      final AuthResponse res = await Supabase.instance.client.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+        accessToken: accessToken,
+      );
+
+      if (mounted && res.user != null) {
+        final userName =
+            (res.user?.userMetadata?['full_name'] as String?) ??
+            res.user?.email?.split('@').first ??
+            'User';
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => HomePage(userName: userName)),
+        );
+      }
+    } catch (e) {
+      debugPrint("Google sign-in error: $e");
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Google sign-in failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -664,19 +866,22 @@ class _SignUpPageState extends State<SignUpPage> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty)
+                    if (value == null || value.isEmpty) {
                       return 'Please enter an email';
-                    if (!value.contains('@'))
+                    }
+                    if (!value.contains('@')) {
                       return 'Please enter a valid email';
+                    }
                     return null;
                   },
                 ),
                 const SizedBox(height: 20),
 
                 // Password Field
+                // Password Field
                 _buildLabel('Password'),
                 TextFormField(
-                  controller: _passwordController, // 3. Attach controller
+                  controller: _passwordController,
                   obscureText: _obscurePassword,
                   decoration: InputDecoration(
                     hintText: 'Enter your password',
@@ -694,16 +899,38 @@ class _SignUpPageState extends State<SignUpPage> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty)
-                      return 'Please enter a password';
-                    if (value.length < 6)
-                      return 'Password must be at least 6 characters';
-                    if (!RegExp(r'\d').hasMatch(value))
-                      return 'Must contain a number';
-                    if (!RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(value))
-                      return 'Must contain a special character';
+                    // Update the validator to include the new rules
+                    if (!_hasMinLength ||
+                        !_hasNumber ||
+                        !_hasSpecialChar ||
+                        !_hasUppercase ||
+                        !_hasLowercase) {
+                      return 'Please meet all password requirements';
+                    }
                     return null;
                   },
+                ),
+
+                const SizedBox(height: 8),
+                // The Live Checklist
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildRequirement('At least 6 characters', _hasMinLength),
+                    _buildRequirement(
+                      'Contains an uppercase letter',
+                      _hasUppercase,
+                    ),
+                    _buildRequirement(
+                      'Contains a lowercase letter',
+                      _hasLowercase,
+                    ),
+                    _buildRequirement('Contains a number', _hasNumber),
+                    _buildRequirement(
+                      'Contains a special character',
+                      _hasSpecialChar,
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 20),
 
@@ -729,10 +956,12 @@ class _SignUpPageState extends State<SignUpPage> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty)
+                    if (value == null || value.isEmpty) {
                       return 'Please confirm your password';
-                    if (value != _passwordController.text)
+                    }
+                    if (value != _passwordController.text) {
                       return 'Passwords do not match';
+                    }
                     return null;
                   },
                 ),
@@ -804,19 +1033,23 @@ class _SignUpPageState extends State<SignUpPage> {
                             data: {'full_name': _nameController.text.trim()},
                           );
 
-                          // If successful, navigate to the Dashboard
+                          // If successful, navigate to the Verification Page
                           if (res.user != null && mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('Account Created! Welcome!'),
+                                content: Text(
+                                  'Account created! Please verify your email.',
+                                ),
                                 backgroundColor: Colors.green,
                               ),
                             );
                             Navigator.pushReplacement(
                               context,
                               MaterialPageRoute(
-                                builder: (context) =>
-                                    HomePage(userName: _nameController.text),
+                                builder: (context) => VerificationPage(
+                                  email: _emailController.text.trim(),
+                                  userName: _nameController.text.trim(),
+                                ),
                               ),
                             );
                           }
@@ -887,7 +1120,11 @@ class _SignUpPageState extends State<SignUpPage> {
                 Row(
                   children: [
                     Expanded(
-                      child: _socialButton('Google', Icons.g_mobiledata),
+                      child: _socialButton(
+                        'Google',
+                        Image.asset('assets/google.png', height: 24, width: 24),
+                        _signInWithGoogle,
+                      ),
                     ),
                     const SizedBox(width: 16),
                   ],
@@ -927,10 +1164,14 @@ class _SignUpPageState extends State<SignUpPage> {
     );
   }
 
-  Widget _socialButton(String label, IconData icon) {
+  Widget _socialButton(
+    String label,
+    Widget iconWidget,
+    VoidCallback onPressed,
+  ) {
     return OutlinedButton.icon(
-      onPressed: () {},
-      icon: Icon(icon, color: Colors.black),
+      onPressed: onPressed,
+      icon: iconWidget, // We changed this to accept any Widget (like an Image)
       label: Text(label, style: const TextStyle(color: Colors.black)),
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -939,6 +1180,29 @@ class _SignUpPageState extends State<SignUpPage> {
       ),
     );
   }
+}
+
+Widget _buildRequirement(String text, bool met) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Row(
+      children: [
+        Icon(
+          met ? Icons.check_circle : Icons.cancel,
+          color: met ? Colors.green : Colors.red,
+          size: 18,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          text,
+          style: TextStyle(
+            color: met ? Colors.green : Colors.red,
+            fontSize: 13,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class ForgotPasswordPage extends StatefulWidget {
@@ -1020,10 +1284,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     ),
                   ),
                   validator: (value) {
-                    if (value == null || value.isEmpty)
+                    if (value == null || value.isEmpty) {
                       return 'Please enter your email';
-                    if (!value.contains('@'))
+                    }
+                    if (!value.contains('@')) {
                       return 'Please enter a valid email';
+                    }
                     return null;
                   },
                 ),
@@ -1052,17 +1318,23 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
                           if (!mounted) return;
 
-                          // Show success message and go back to login
+                          // Show success message and go to OTP reset page
                           ScaffoldMessenger.of(context).hideCurrentSnackBar();
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                              content: Text(
-                                'Password reset link sent! Check your inbox.',
-                              ),
+                              content: Text('OTP sent! Check your inbox.'),
                               backgroundColor: Colors.green,
                             ),
                           );
-                          Navigator.pop(context); // Return to Login Page
+                          Navigator.pushReplacement(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  ResetPasswordVerificationPage(
+                                    email: _emailController.text.trim(),
+                                  ),
+                            ),
+                          );
                         } on AuthException catch (e) {
                           if (!mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1109,8 +1381,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
 class VerificationPage extends StatefulWidget {
   final String email;
+  final String userName;
 
-  const VerificationPage({super.key, required this.email});
+  const VerificationPage({
+    super.key,
+    required this.email,
+    required this.userName,
+  });
 
   @override
   State<VerificationPage> createState() => _VerificationPageState();
@@ -1351,6 +1628,287 @@ class _VerificationPageState extends State<VerificationPage> {
                 ],
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ResetPasswordVerificationPage extends StatefulWidget {
+  final String email;
+
+  const ResetPasswordVerificationPage({super.key, required this.email});
+
+  @override
+  State<ResetPasswordVerificationPage> createState() =>
+      _ResetPasswordVerificationPageState();
+}
+
+class _ResetPasswordVerificationPageState
+    extends State<ResetPasswordVerificationPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _codeController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _verifyAndResetPassword() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final code = _codeController.text.trim();
+    if (code.length != 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter the 6-digit code')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      // 1. Verify OTP
+      final AuthResponse res = await Supabase.instance.client.auth.verifyOTP(
+        type: OtpType.recovery,
+        email: widget.email,
+        token: code,
+      );
+
+      if (!mounted) return;
+
+      if (res.session != null) {
+        // 2. Update password since user is now logged in
+        await Supabase.instance.client.auth.updateUser(
+          UserAttributes(password: _passwordController.text),
+        );
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Password updated successfully! Welcome back.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        final userName =
+            (res.user?.userMetadata?['full_name'] as String?) ??
+            widget.email.split('@').first;
+
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => HomePage(userName: userName)),
+          (route) => false,
+        );
+      }
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // Helper method to build label
+  Widget _buildLabel(String label) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 8.0),
+        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black),
+      ),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 32.0),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Icon
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF634DFF).withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.lock_reset,
+                    color: Color(0xFF634DFF),
+                    size: 48,
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Titles
+                const Text(
+                  'Reset Password',
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Enter the 6-digit code sent to\n${widget.email}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    height: 1.5,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 32),
+
+                // OTP Field
+                TextField(
+                  controller: _codeController,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 16,
+                  ),
+                  decoration: InputDecoration(
+                    counterText: "",
+                    hintText: '000000',
+                    hintStyle: TextStyle(color: Colors.grey.withOpacity(0.3)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(
+                        color: Color(0xFF634DFF),
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // New Password Field
+                _buildLabel('New Password'),
+                TextFormField(
+                  controller: _passwordController,
+                  obscureText: _obscurePassword,
+                  decoration: InputDecoration(
+                    hintText: 'Enter new password',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                    ),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter a password';
+                    }
+                    if (value.length < 6) {
+                      return 'Password must be at least 6 characters';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 20),
+
+                // Confirm Password Field
+                _buildLabel('Confirm Password'),
+                TextFormField(
+                  controller: _confirmPasswordController,
+                  obscureText: _obscureConfirmPassword,
+                  decoration: InputDecoration(
+                    hintText: 'Confirm new password',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureConfirmPassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
+                      ),
+                      onPressed: () => setState(
+                        () =>
+                            _obscureConfirmPassword = !_obscureConfirmPassword,
+                      ),
+                    ),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please confirm your password';
+                    }
+                    if (value != _passwordController.text) {
+                      return 'Passwords do not match';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 32),
+
+                // Reset Button
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _verifyAndResetPassword,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF634DFF),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: _isLoading
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text(
+                            'Reset Password',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
           ),
         ),
       ),
