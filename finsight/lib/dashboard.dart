@@ -6,6 +6,9 @@ import 'profile.dart';
 import 'analytics.dart';
 import 'budget.dart';
 import 'add_transaction_bottom_sheet.dart';
+import 'finance_service.dart';
+import 'goals.dart';
+import 'transactions_page.dart';
 
 class HomePage extends StatefulWidget {
   final String userName;
@@ -33,6 +36,11 @@ class _HomePageState extends State<HomePage> {
     'Others': 0.0,
   };
 
+  Map<String, double> _budgets = FinanceService.defaultBudgets;
+  String _aiInsight = "Loading your financial insights...";
+  bool _isAiLoading = true;
+  List<double> _weeklyHeights = List.filled(10, 15.0);
+
   final _currencyFormat = NumberFormat.currency(locale: 'en_PH', symbol: '₱');
 
   @override
@@ -46,6 +54,8 @@ class _HomePageState extends State<HomePage> {
       final userId = Supabase.instance.client.auth.currentUser?.id;
       if (userId == null) return;
 
+      final loadedBudgets = await FinanceService.getBudgets();
+
       final data = await Supabase.instance.client
           .from('transactions')
           .select()
@@ -54,16 +64,82 @@ class _HomePageState extends State<HomePage> {
 
       if (mounted) {
         setState(() {
+          _budgets = loadedBudgets;
           _transactions = List<Map<String, dynamic>>.from(data);
           _calculateTotals();
+          _calculateWeeklyHeights();
           _isLoading = false;
         });
+
+        // Trigger AI Insight in the background
+        _generateAiInsight();
       }
     } catch (e) {
       debugPrint("Error fetching transactions: $e");
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  void _calculateWeeklyHeights() {
+    final now = DateTime.now();
+    final Map<String, double> dailySpends = {};
+
+    // Pre-populate last 10 days
+    for (int i = 0; i < 10; i++) {
+      final dateStr = DateFormat('yyyy-MM-dd').format(now.subtract(Duration(days: i)));
+      dailySpends[dateStr] = 0.0;
+    }
+
+    // Populate actual spending
+    for (var t in _transactions) {
+      if (t['type'] == 'expense') {
+        final date = DateTime.parse(t['created_at']).toLocal();
+        final dateStr = DateFormat('yyyy-MM-dd').format(date);
+        if (dailySpends.containsKey(dateStr)) {
+          dailySpends[dateStr] = dailySpends[dateStr]! + (t['amount'] as num).toDouble();
+        }
+      }
+    }
+
+    double maxSpend = dailySpends.values.fold(0.0, (max, val) => val > max ? val : max);
+
+    final List<double> heights = [];
+    for (int i = 9; i >= 0; i--) {
+      final dateStr = DateFormat('yyyy-MM-dd').format(now.subtract(Duration(days: i)));
+      final spend = dailySpends[dateStr] ?? 0.0;
+
+      if (maxSpend == 0.0) {
+        heights.add(15.0);
+      } else {
+        double height = 15.0 + (spend / maxSpend) * 45.0;
+        heights.add(height);
+      }
+    }
+
+    setState(() {
+      _weeklyHeights = heights;
+    });
+  }
+
+  Future<void> _generateAiInsight() async {
+    if (mounted) {
+      setState(() => _isAiLoading = true);
+    }
+
+    final insight = await FinanceService.generateAiInsight(
+      transactions: _transactions,
+      categoryTotals: _categoryTotals,
+      totalIncome: _totalIncome,
+      totalExpense: _totalExpense,
+    );
+
+    if (mounted) {
+      setState(() {
+        _aiInsight = insight;
+        _isAiLoading = false;
+      });
     }
   }
 
@@ -210,9 +286,17 @@ class _HomePageState extends State<HomePage> {
                 'FinSight',
                 style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
               ),
-              CircleAvatar(
-                backgroundColor: Colors.white.withOpacity(0.2),
-                child: const Icon(Icons.person, color: Colors.white),
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const GoalsPage()),
+                  );
+                },
+                child: CircleAvatar(
+                  backgroundColor: Colors.white.withOpacity(0.2),
+                  child: const Icon(Icons.savings, color: Colors.white),
+                ),
               ),
             ],
           ),
@@ -251,13 +335,14 @@ class _HomePageState extends State<HomePage> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: List.generate(10, (index) {
-                    final heights = [15.0, 25.0, 15.0, 30.0, 20.0, 35.0, 25.0, 40.0, 25.0, 30.0];
-                    return Container(
-                      width: 24,
-                      height: heights[index],
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.3),
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                    return Expanded(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 2),
+                        height: _weeklyHeights[index],
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.35),
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                        ),
                       ),
                     );
                   }),
@@ -294,6 +379,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildSpendingInsights() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final useVerticalLayout = screenWidth < 380;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
@@ -309,27 +397,47 @@ class _HomePageState extends State<HomePage> {
             ),
             child: Column(
               children: [
-                Row(
-                  children: [
-                    SizedBox(
+                if (useVerticalLayout) ...[
+                  Center(
+                    child: SizedBox(
                       height: 120,
                       width: 120,
                       child: CustomPaint(painter: DonutChartPainter(categoryTotals: _categoryTotals, totalExpense: _totalExpense)),
                     ),
-                    const SizedBox(width: 32),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          _buildLegendItem('Food', _currencyFormat.format(_categoryTotals['Food']), const Color(0xFF8C3CFF)),
-                          _buildLegendItem('Transport', _currencyFormat.format(_categoryTotals['Transport']), const Color(0xFF2E62FF)),
-                          _buildLegendItem('Bills', _currencyFormat.format(_categoryTotals['Bills']), const Color(0xFF00BCC9)),
-                          _buildLegendItem('Shopping', _currencyFormat.format(_categoryTotals['Shopping']), const Color(0xFF00C853)),
-                          _buildLegendItem('Others', _currencyFormat.format(_categoryTotals['Others']), const Color(0xFFFFB300)),
-                        ],
+                  ),
+                  const SizedBox(height: 24),
+                  Column(
+                    children: [
+                      _buildLegendItem('Food', _currencyFormat.format(_categoryTotals['Food']), const Color(0xFF8C3CFF)),
+                      _buildLegendItem('Transport', _currencyFormat.format(_categoryTotals['Transport']), const Color(0xFF2E62FF)),
+                      _buildLegendItem('Bills', _currencyFormat.format(_categoryTotals['Bills']), const Color(0xFF00BCC9)),
+                      _buildLegendItem('Shopping', _currencyFormat.format(_categoryTotals['Shopping']), const Color(0xFF00C853)),
+                      _buildLegendItem('Others', _currencyFormat.format(_categoryTotals['Others']), const Color(0xFFFFB300)),
+                    ],
+                  ),
+                ] else ...[
+                  Row(
+                    children: [
+                      SizedBox(
+                        height: 120,
+                        width: 120,
+                        child: CustomPaint(painter: DonutChartPainter(categoryTotals: _categoryTotals, totalExpense: _totalExpense)),
                       ),
-                    ),
-                  ],
-                ),
+                      const SizedBox(width: 32),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            _buildLegendItem('Food', _currencyFormat.format(_categoryTotals['Food']), const Color(0xFF8C3CFF)),
+                            _buildLegendItem('Transport', _currencyFormat.format(_categoryTotals['Transport']), const Color(0xFF2E62FF)),
+                            _buildLegendItem('Bills', _currencyFormat.format(_categoryTotals['Bills']), const Color(0xFF00BCC9)),
+                            _buildLegendItem('Shopping', _currencyFormat.format(_categoryTotals['Shopping']), const Color(0xFF00C853)),
+                            _buildLegendItem('Others', _currencyFormat.format(_categoryTotals['Others']), const Color(0xFFFFB300)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 24),
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -342,11 +450,33 @@ class _HomePageState extends State<HomePage> {
                         child: const Icon(Icons.favorite_border, color: Colors.purple, size: 16),
                       ),
                       const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text(
-                          'AI Insight: Let Gemini categorize your expenses to see where your money goes!',
-                          style: TextStyle(fontSize: 13, color: Colors.black87),
-                        ),
+                      Expanded(
+                        child: _isAiLoading
+                            ? Row(
+                                children: [
+                                  const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.5,
+                                      valueColor: AlwaysStoppedAnimation<Color>(Colors.purple),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'AI is analyzing your spending patterns...',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.purple.shade700,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : Text(
+                                _aiInsight,
+                                style: const TextStyle(fontSize: 13, color: Colors.black87, height: 1.4),
+                              ),
                       ),
                     ],
                   ),
@@ -388,7 +518,12 @@ class _HomePageState extends State<HomePage> {
             children: [
               const Text('Recent Transactions', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               TextButton(
-                onPressed: () {},
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const TransactionsPage()),
+                  ).then((_) => _fetchTransactions());
+                },
                 child: const Text('See All', style: TextStyle(color: Color(0xFF2E62FF))),
               ),
             ],
@@ -400,10 +535,10 @@ class _HomePageState extends State<HomePage> {
               child: Text("No transactions yet. Tap the + button to add one!"),
             ),
           if (!_isLoading)
-            ..._transactions.map((t) {
+            ..._transactions.take(5).map((t) {
               final isIncome = t['type'] == 'income';
               final amount = (t['amount'] as num).toDouble();
-              final date = DateTime.parse(t['created_at']);
+              final date = DateTime.parse(t['created_at']).toLocal();
               final dateFormatted = DateFormat('MMM d, h:mm a').format(date);
               
               IconData icon;
@@ -518,24 +653,31 @@ class _HomePageState extends State<HomePage> {
         children: [
           const Text('Budget Progress', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
-          // Using hardcoded totals just for demo representation
-          _buildProgressBar('Food', _currencyFormat.format(_categoryTotals['Food']), '₱5,000.00', (_categoryTotals['Food']! / 5000).clamp(0.0, 1.0), const Color(0xFF00C853)),
-          _buildProgressBar('Transport', _currencyFormat.format(_categoryTotals['Transport']), '₱2,000.00', (_categoryTotals['Transport']! / 2000).clamp(0.0, 1.0), const Color(0xFFFFB300)),
-          _buildProgressBar('Bills', _currencyFormat.format(_categoryTotals['Bills']), '₱10,000.00', (_categoryTotals['Bills']! / 10000).clamp(0.0, 1.0), const Color(0xFF00BCC9)),
-          _buildProgressBar('Shopping', _currencyFormat.format(_categoryTotals['Shopping']), '₱3,000.00', (_categoryTotals['Shopping']! / 3000).clamp(0.0, 1.0), const Color(0xFF8C3CFF)),
+          _buildProgressBar('Food', _categoryTotals['Food']!, _budgets['Food']!, const Color(0xFF00C853)),
+          _buildProgressBar('Transport', _categoryTotals['Transport']!, _budgets['Transport']!, const Color(0xFFFFB300)),
+          _buildProgressBar('Bills', _categoryTotals['Bills']!, _budgets['Bills']!, const Color(0xFF00BCC9)),
+          _buildProgressBar('Shopping', _categoryTotals['Shopping']!, _budgets['Shopping']!, const Color(0xFF8C3CFF)),
         ],
       ),
     );
   }
 
-  Widget _buildProgressBar(String title, String spent, String total, double percent, Color color) {
+  Widget _buildProgressBar(String title, double spent, double limit, Color color) {
+    final percent = limit > 0 ? (spent / limit).clamp(0.0, 1.0) : 0.0;
+    final spentStr = _currencyFormat.format(spent);
+    final totalStr = _currencyFormat.format(limit);
+    final isExceeded = spent > limit;
+    final barColor = isExceeded ? const Color(0xFFEF4444) : color;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: isExceeded ? const Color(0xFFFEF2F2) : Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.withOpacity(0.1)),
+        border: Border.all(
+          color: isExceeded ? Colors.red.withOpacity(0.2) : Colors.grey.withOpacity(0.1),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -543,8 +685,21 @@ class _HomePageState extends State<HomePage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-              Text('$spent / $total', style: const TextStyle(color: Colors.grey, fontSize: 13)),
+              Text(
+                title, 
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: isExceeded ? const Color(0xFFB91C1C) : Colors.black87,
+                ),
+              ),
+              Text(
+                '$spentStr / $totalStr', 
+                style: TextStyle(
+                  color: isExceeded ? const Color(0xFFB91C1C) : Colors.grey, 
+                  fontSize: 13,
+                  fontWeight: isExceeded ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -553,12 +708,32 @@ class _HomePageState extends State<HomePage> {
             child: LinearProgressIndicator(
               value: percent,
               backgroundColor: Colors.grey.withOpacity(0.2),
-              valueColor: AlwaysStoppedAnimation<Color>(color),
+              valueColor: AlwaysStoppedAnimation<Color>(barColor),
               minHeight: 8,
             ),
           ),
           const SizedBox(height: 8),
-          Text('${(percent * 100).toInt()}% used', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${(percent * 100).toInt()}% used', 
+                style: TextStyle(
+                  color: isExceeded ? const Color(0xFFB91C1C) : Colors.grey, 
+                  fontSize: 12,
+                ),
+              ),
+              if (isExceeded)
+                const Text(
+                  '⚠️ Exceeded!',
+                  style: TextStyle(
+                    color: Color(0xFFB91C1C),
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );

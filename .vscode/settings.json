@@ -1,0 +1,12 @@
+{
+    "python.defaultInterpreterPath": "C:\\Users\\mdg4l\\repo\\FinSight\\backend\\venv\\Scripts\\python.exe",
+    "python.pythonPath": "C:\\Users\\mdg4l\\repo\\FinSight\\backend\\venv\\Scripts\\python.exe",
+    "python.analysis.extraPaths": [
+        "C:\\Users\\mdg4l\\repo\\FinSight\\backend\\venv\\Lib\\site-packages",
+        "C:\\Users\\mdg4l\\repo\\FinSight\\backend"
+    ],
+    "pylance.extraPaths": [
+        "C:\\Users\\mdg4l\\repo\\FinSight\\backend\\venv\\Lib\\site-packages",
+        "C:\\Users\\mdg4l\\repo\\FinSight\\backend"
+    ]
+}

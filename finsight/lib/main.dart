@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 //import 'package:screen_protector/screen_protector.dart';
 import 'package:local_auth/local_auth.dart';
@@ -28,7 +29,7 @@ Future<void> main() async {
   // This turns the screen black/white or blurs it in the app switcher
   // await ScreenProtector.protectDataLeakageOn();
 
-  runApp(const MyApp());
+  runApp(const ProviderScope(child: MyApp()));
 }
 
 class MyApp extends StatelessWidget {
@@ -43,6 +44,12 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF634DFF)),
         useMaterial3: true,
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
       ),
       builder: (context, child) {
         return UserInactivityWrapper(child: child!);
@@ -78,6 +85,9 @@ class _UserInactivityWrapperState extends State<UserInactivityWrapper> {
     final session = Supabase.instance.client.auth.currentSession;
     if (session != null) {
       await Supabase.instance.client.auth.signOut();
+      try {
+        await GoogleSignIn().disconnect();
+      } catch (_) {}
       navigatorKey.currentState?.pushAndRemoveUntil(
         MaterialPageRoute(builder: (context) => const LoginPage()),
         (route) => false,
@@ -145,11 +155,10 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _signInWithGoogle() async {
     try {
-      const webClientId = 'YOUR_WEB_CLIENT_ID'; // Replace with your actual Web Client ID
-      const iosClientId = 'YOUR_IOS_CLIENT_ID'; // Replace with your actual iOS Client ID
+      const webClientId =
+          '880066791469-s55n82s19q3ua8lq7188s41hvq0aq8el.apps.googleusercontent.com';
 
       final GoogleSignIn googleSignIn = GoogleSignIn(
-        clientId: iosClientId,
         serverClientId: webClientId,
       );
 
@@ -166,11 +175,12 @@ class _LoginPageState extends State<LoginPage> {
         throw 'No Access Token or ID Token found.';
       }
 
-      final AuthResponse res = await Supabase.instance.client.auth.signInWithIdToken(
-        provider: OAuthProvider.google,
-        idToken: idToken,
-        accessToken: accessToken,
-      );
+      final AuthResponse res = await Supabase.instance.client.auth
+          .signInWithIdToken(
+            provider: OAuthProvider.google,
+            idToken: idToken,
+            accessToken: accessToken,
+          );
 
       if (mounted && res.user != null) {
         final userName =
@@ -187,12 +197,14 @@ class _LoginPageState extends State<LoginPage> {
       debugPrint("Google sign-in error: $e");
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Google sign-in failed: $e"),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: Text("Google sign-in failed: $e"),
+              backgroundColor: Colors.red,
+            ),
+          );
       }
     }
   }
@@ -209,12 +221,14 @@ class _LoginPageState extends State<LoginPage> {
 
       if (session == null) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("No saved session. Please login manually first."),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text("No saved session. Please login manually first."),
+              backgroundColor: Colors.red,
+            ),
+          );
         return;
       }
 
@@ -453,24 +467,28 @@ class _LoginPageState extends State<LoginPage> {
                         final seconds = remaining.inSeconds % 60;
 
                         if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                'Account temporarily locked. Try again in $minutes:${seconds.toString().padLeft(2, '0')}',
+                          ScaffoldMessenger.of(context)
+                            ..clearSnackBars()
+                            ..showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Account temporarily locked. Try again in $minutes:${seconds.toString().padLeft(2, '0')}',
+                                ),
+                                backgroundColor: Colors.red,
+                                duration: const Duration(seconds: 5),
                               ),
-                              backgroundColor: Colors.red,
-                              duration: const Duration(seconds: 5),
-                            ),
-                          );
+                            );
                         }
                         return;
                       }
 
                       if (_formKey.currentState!.validate()) {
                         // Show loading indicator
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Signing in...')),
-                        );
+                        ScaffoldMessenger.of(context)
+                          ..clearSnackBars()
+                          ..showSnackBar(
+                            const SnackBar(content: Text('Signing in...')),
+                          );
 
                         try {
                           // 4. Send credentials to Supabase
@@ -507,14 +525,16 @@ class _LoginPageState extends State<LoginPage> {
                           if (e.message.toLowerCase().contains(
                             'email not confirmed',
                           )) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Please verify your email to continue.',
+                            ScaffoldMessenger.of(context)
+                              ..clearSnackBars()
+                              ..showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Please verify your email to continue.',
+                                  ),
+                                  backgroundColor: Colors.orange,
                                 ),
-                                backgroundColor: Colors.orange,
-                              ),
-                            );
+                              );
 
                             // Send them to finish verifying
                             Navigator.push(
@@ -540,32 +560,49 @@ class _LoginPageState extends State<LoginPage> {
                           if (mounted) {
                             String errorMessage = e.message;
 
+                            if (e.message.toLowerCase().contains(
+                                  'user not found',
+                                ) ||
+                                e.message.toLowerCase().contains(
+                                  'does not exist',
+                                ) ||
+                                e.message.toLowerCase().contains(
+                                  'invalid login credentials',
+                                )) {
+                              errorMessage = "This account doesn't exist";
+                            }
+
                             if (_isAccountLocked(email)) {
                               errorMessage =
                                   'Account locked due to too many failed attempts. Try again in 3 minutes.';
-                            } else if (remainingAttempts > 0) {
+                            } else if (remainingAttempts > 0 &&
+                                errorMessage != "This account doesn't exist") {
                               errorMessage =
-                                  '${e.message} ($remainingAttempts attempts remaining)';
+                                  '$errorMessage ($remainingAttempts attempts remaining)';
                             }
 
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(errorMessage),
-                                backgroundColor: Colors.red,
-                                duration: const Duration(seconds: 5),
-                              ),
-                            );
+                            ScaffoldMessenger.of(context)
+                              ..clearSnackBars()
+                              ..showSnackBar(
+                                SnackBar(
+                                  content: Text(errorMessage),
+                                  backgroundColor: Colors.red,
+                                  duration: const Duration(seconds: 5),
+                                ),
+                              );
                           }
                         } catch (e) {
                           // Handle other errors (like no internet)
                           if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Error: $e'),
-                                backgroundColor: Colors.red,
-                                duration: const Duration(seconds: 5),
-                              ),
-                            );
+                            ScaffoldMessenger.of(context)
+                              ..clearSnackBars()
+                              ..showSnackBar(
+                                SnackBar(
+                                  content: Text('Error: $e'),
+                                  backgroundColor: Colors.red,
+                                  duration: const Duration(seconds: 5),
+                                ),
+                              );
                           }
                         }
                       }
@@ -699,6 +736,35 @@ class _LoginPageState extends State<LoginPage> {
 }
 
 // -----------------------------------------------------------------
+// RATE LIMIT LOCKOUT MANAGER
+// -----------------------------------------------------------------
+class RateLimitManager {
+  static const String _key = 'rate_limit_lockout_time';
+  static const Duration _lockoutDuration = Duration(minutes: 60);
+
+  static Future<void> setRateLimitLockout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_key, DateTime.now().millisecondsSinceEpoch);
+  }
+
+  static Future<int> getRemainingLockoutSeconds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lockoutTimeMs = prefs.getInt(_key);
+    if (lockoutTimeMs == null) return 0;
+
+    final lockoutTime = DateTime.fromMillisecondsSinceEpoch(lockoutTimeMs);
+    final expirationTime = lockoutTime.add(_lockoutDuration);
+    final difference = expirationTime.difference(DateTime.now()).inSeconds;
+
+    if (difference <= 0) {
+      await prefs.remove(_key);
+      return 0;
+    }
+    return difference;
+  }
+}
+
+// -----------------------------------------------------------------
 // SIGN UP PAGE
 // -----------------------------------------------------------------
 class SignUpPage extends StatefulWidget {
@@ -725,11 +791,15 @@ class _SignUpPageState extends State<SignUpPage> {
   bool _hasUppercase = false;
   bool _hasLowercase = false;
 
+  Timer? _rateLimitTimer;
+  int _rateLimitSecondsRemaining = 0;
+
   // 2. Dispose of them to prevent memory leaks
 
   @override
   void initState() {
     super.initState();
+    _checkRateLimitLockout();
     _passwordController.addListener(() {
       final password = _passwordController.text;
       setState(() {
@@ -747,16 +817,55 @@ class _SignUpPageState extends State<SignUpPage> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _rateLimitTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _checkRateLimitLockout() async {
+    final remaining = await RateLimitManager.getRemainingLockoutSeconds();
+    if (remaining > 0) {
+      if (mounted) {
+        setState(() {
+          _rateLimitSecondsRemaining = remaining;
+        });
+      }
+      _rateLimitTimer?.cancel();
+      _rateLimitTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (_rateLimitSecondsRemaining <= 1) {
+          timer.cancel();
+          if (mounted) {
+            setState(() {
+              _rateLimitSecondsRemaining = 0;
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _rateLimitSecondsRemaining--;
+            });
+          }
+        }
+      });
+    }
+  }
+
+  Future<void> _handleRateLimitError() async {
+    await RateLimitManager.setRateLimitLockout();
+    await _checkRateLimitLockout();
+  }
+
+  String _formatRateLimitDuration(int totalSeconds) {
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   Future<void> _signInWithGoogle() async {
     try {
-      const webClientId = 'YOUR_WEB_CLIENT_ID'; // Replace with your actual Web Client ID
-      const iosClientId = 'YOUR_IOS_CLIENT_ID'; // Replace with your actual iOS Client ID
+      const webClientId =
+          '880066791469-s55n82s19q3ua8lq7188s41hvq0aq8el.apps.googleusercontent.com';
 
       final GoogleSignIn googleSignIn = GoogleSignIn(
-        clientId: iosClientId,
         serverClientId: webClientId,
       );
 
@@ -773,11 +882,12 @@ class _SignUpPageState extends State<SignUpPage> {
         throw 'No Access Token or ID Token found.';
       }
 
-      final AuthResponse res = await Supabase.instance.client.auth.signInWithIdToken(
-        provider: OAuthProvider.google,
-        idToken: idToken,
-        accessToken: accessToken,
-      );
+      final AuthResponse res = await Supabase.instance.client.auth
+          .signInWithIdToken(
+            provider: OAuthProvider.google,
+            idToken: idToken,
+            accessToken: accessToken,
+          );
 
       if (mounted && res.user != null) {
         final userName =
@@ -794,12 +904,14 @@ class _SignUpPageState extends State<SignUpPage> {
       debugPrint("Google sign-in error: $e");
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Google sign-in failed: $e"),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: Text("Google sign-in failed: $e"),
+              backgroundColor: Colors.red,
+            ),
+          );
       }
     }
   }
@@ -839,6 +951,39 @@ class _SignUpPageState extends State<SignUpPage> {
                   style: TextStyle(color: Colors.grey),
                 ),
                 const SizedBox(height: 32),
+
+                if (_rateLimitSecondsRemaining > 0)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 20),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          color: Colors.red.shade700,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Rate limit reached. Please wait ${_formatRateLimitDuration(_rateLimitSecondsRemaining)} before trying again.',
+                            style: TextStyle(
+                              color: Colors.red.shade800,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
 
                 // Username Field
                 _buildLabel('Username'),
@@ -1014,76 +1159,131 @@ class _SignUpPageState extends State<SignUpPage> {
                   width: double.infinity,
                   height: 56,
                   child: ElevatedButton(
-                    onPressed: () async {
-                      // Validate form and check terms checkbox
-                      if (_formKey.currentState!.validate() && _agreedToTerms) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Creating your account...'),
-                          ),
-                        );
+                    onPressed: _rateLimitSecondsRemaining > 0
+                        ? null
+                        : () async {
+                            // Validate form and check terms checkbox
+                            if (_formKey.currentState!.validate() &&
+                                _agreedToTerms) {
+                              ScaffoldMessenger.of(context)
+                                ..clearSnackBars()
+                                ..showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Creating your account...'),
+                                  ),
+                                );
 
-                        try {
-                          // 4. Send the controller data to Supabase
-                          final AuthResponse
-                          res = await Supabase.instance.client.auth.signUp(
-                            email: _emailController.text.trim(),
-                            password: _passwordController.text.trim(),
-                            // Optional: You can pass the Full Name in the user metadata
-                            data: {'full_name': _nameController.text.trim()},
-                          );
-
-                          // If successful, navigate to the Verification Page
-                          if (res.user != null && mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Account created! Please verify your email.',
-                                ),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                            Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => VerificationPage(
+                              try {
+                                // 4. Send the controller data to Supabase
+                                final AuthResponse
+                                res = await Supabase.instance.client.auth.signUp(
                                   email: _emailController.text.trim(),
-                                  userName: _nameController.text.trim(),
-                                ),
-                              ),
-                            );
-                          }
-                        } on AuthException catch (e) {
-                          // Catch Supabase specific errors (like "User already exists")
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('User already exists $e'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                          }
-                        } catch (e) {
-                          // Catch any other unexpected errors
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('An error occurred: $e'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                          }
-                        }
-                      } else if (!_agreedToTerms) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Please agree to the Terms of Service',
-                            ),
-                          ),
-                        );
-                      }
-                    },
+                                  password: _passwordController.text.trim(),
+                                  // Optional: You can pass the Full Name in the user metadata
+                                  data: {
+                                    'full_name': _nameController.text.trim(),
+                                  },
+                                );
+
+                                // If successful, navigate to the appropriate page depending on confirmation settings
+                                if (res.user != null && mounted) {
+                                  if (res.session != null) {
+                                    // If email confirmation is disabled, the user is signed in immediately
+                                    ScaffoldMessenger.of(context)
+                                      ..clearSnackBars()
+                                      ..showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Account created successfully!',
+                                          ),
+                                          backgroundColor: Colors.green,
+                                        ),
+                                      );
+                                    Navigator.pushReplacement(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => HomePage(
+                                          userName: _nameController.text.trim(),
+                                        ),
+                                      ),
+                                    );
+                                  } else {
+                                    // If email confirmation is enabled, they must verify their email
+                                    ScaffoldMessenger.of(context)
+                                      ..clearSnackBars()
+                                      ..showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Account created! Please verify your email.',
+                                          ),
+                                          backgroundColor: Colors.green,
+                                        ),
+                                      );
+                                    Navigator.pushReplacement(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => VerificationPage(
+                                          email: _emailController.text.trim(),
+                                          userName: _nameController.text.trim(),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                }
+                              } on AuthException catch (e) {
+                                if (e.message.toLowerCase().contains(
+                                  'rate limit',
+                                )) {
+                                  await _handleRateLimitError();
+                                }
+                                // Catch Supabase specific errors (like "User already exists")
+                                if (mounted) {
+                                  String errorMsg =
+                                      'An error occurred during sign up.';
+                                  if (e.message.toLowerCase().contains(
+                                        'already registered',
+                                      ) ||
+                                      e.message.toLowerCase().contains(
+                                        'already exists',
+                                      )) {
+                                    errorMsg = 'Account already exists';
+                                  } else {
+                                    errorMsg = e.message;
+                                  }
+                                  ScaffoldMessenger.of(context)
+                                    ..clearSnackBars()
+                                    ..showSnackBar(
+                                      SnackBar(
+                                        content: Text(errorMsg),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                }
+                              } catch (e) {
+                                // Catch any other unexpected errors
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context)
+                                    ..clearSnackBars()
+                                    ..showSnackBar(
+                                      SnackBar(
+                                        content: Text('An error occurred: $e'),
+                                        backgroundColor: Colors.red,
+                                      ),
+                                    );
+                                }
+                              }
+                            } else if (!_agreedToTerms) {
+                              ScaffoldMessenger.of(context)
+                                ..clearSnackBars()
+                                ..showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Please agree to the Terms of Service',
+                                    ),
+                                  ),
+                                );
+                            }
+                          },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF634DFF),
                       shape: RoundedRectangleBorder(
@@ -1215,11 +1415,59 @@ class ForgotPasswordPage extends StatefulWidget {
 class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
+  Timer? _rateLimitTimer;
+  int _rateLimitSecondsRemaining = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkRateLimitLockout();
+  }
 
   @override
   void dispose() {
     _emailController.dispose();
+    _rateLimitTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _checkRateLimitLockout() async {
+    final remaining = await RateLimitManager.getRemainingLockoutSeconds();
+    if (remaining > 0) {
+      if (mounted) {
+        setState(() {
+          _rateLimitSecondsRemaining = remaining;
+        });
+      }
+      _rateLimitTimer?.cancel();
+      _rateLimitTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (_rateLimitSecondsRemaining <= 1) {
+          timer.cancel();
+          if (mounted) {
+            setState(() {
+              _rateLimitSecondsRemaining = 0;
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _rateLimitSecondsRemaining--;
+            });
+          }
+        }
+      });
+    }
+  }
+
+  Future<void> _handleRateLimitError() async {
+    await RateLimitManager.setRateLimitLockout();
+    await _checkRateLimitLockout();
+  }
+
+  String _formatRateLimitDuration(int totalSeconds) {
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -1267,6 +1515,39 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                 ),
                 const SizedBox(height: 32),
 
+                if (_rateLimitSecondsRemaining > 0)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 20),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          color: Colors.red.shade700,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Rate limit reached. Please wait ${_formatRateLimitDuration(_rateLimitSecondsRemaining)} before trying again.',
+                            style: TextStyle(
+                              color: Colors.red.shade800,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                 // Email Field
                 const Padding(
                   padding: EdgeInsets.only(bottom: 8.0),
@@ -1300,60 +1581,79 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                   width: double.infinity,
                   height: 56,
                   child: ElevatedButton(
-                    onPressed: () async {
-                      if (_formKey.currentState!.validate()) {
-                        // Show loading indicator
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Sending reset link...'),
-                          ),
-                        );
-
-                        try {
-                          // Tell Supabase to send the reset email
-                          await Supabase.instance.client.auth
-                              .resetPasswordForEmail(
-                                _emailController.text.trim(),
-                              );
-
-                          if (!mounted) return;
-
-                          // Show success message and go to OTP reset page
-                          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('OTP sent! Check your inbox.'),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>
-                                  ResetPasswordVerificationPage(
-                                    email: _emailController.text.trim(),
+                    onPressed: _rateLimitSecondsRemaining > 0
+                        ? null
+                        : () async {
+                            if (_formKey.currentState!.validate()) {
+                              // Show loading indicator
+                              ScaffoldMessenger.of(context)
+                                ..clearSnackBars()
+                                ..showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Sending reset link...'),
                                   ),
-                            ),
-                          );
-                        } on AuthException catch (e) {
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(e.message),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        } catch (e) {
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Error: $e'),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                      }
-                    },
+                                );
+
+                              try {
+                                // Tell Supabase to send the reset email
+                                await Supabase.instance.client.auth
+                                    .resetPasswordForEmail(
+                                      _emailController.text.trim(),
+                                    );
+
+                                if (!mounted) return;
+
+                                // Show success message and go to OTP reset page
+                                ScaffoldMessenger.of(
+                                  context,
+                                ).hideCurrentSnackBar();
+                                ScaffoldMessenger.of(context)
+                                  ..clearSnackBars()
+                                  ..showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'OTP sent! Check your inbox.',
+                                      ),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) =>
+                                        ResetPasswordVerificationPage(
+                                          email: _emailController.text.trim(),
+                                        ),
+                                  ),
+                                );
+                              } on AuthException catch (e) {
+                                if (e.message.toLowerCase().contains(
+                                  'rate limit',
+                                )) {
+                                  await _handleRateLimitError();
+                                }
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context)
+                                  ..clearSnackBars()
+                                  ..showSnackBar(
+                                    SnackBar(
+                                      content: Text(e.message),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                              } catch (e) {
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context)
+                                  ..clearSnackBars()
+                                  ..showSnackBar(
+                                    SnackBar(
+                                      content: Text('Error: $e'),
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  );
+                              }
+                            }
+                          },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF634DFF),
                       shape: RoundedRectangleBorder(
@@ -1396,11 +1696,81 @@ class VerificationPage extends StatefulWidget {
 class _VerificationPageState extends State<VerificationPage> {
   final _codeController = TextEditingController();
   bool _isLoading = false;
+  Timer? _cooldownTimer;
+  int _secondsRemaining = 60;
+  Timer? _rateLimitTimer;
+  int _rateLimitSecondsRemaining = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _startCooldown();
+    _checkRateLimitLockout();
+  }
 
   @override
   void dispose() {
     _codeController.dispose();
+    _cooldownTimer?.cancel();
+    _rateLimitTimer?.cancel();
     super.dispose();
+  }
+
+  void _startCooldown() {
+    setState(() {
+      _secondsRemaining = 60;
+    });
+    _cooldownTimer?.cancel();
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_secondsRemaining == 0) {
+        timer.cancel();
+      } else {
+        if (mounted) {
+          setState(() {
+            _secondsRemaining--;
+          });
+        }
+      }
+    });
+  }
+
+  Future<void> _checkRateLimitLockout() async {
+    final remaining = await RateLimitManager.getRemainingLockoutSeconds();
+    if (remaining > 0) {
+      if (mounted) {
+        setState(() {
+          _rateLimitSecondsRemaining = remaining;
+        });
+      }
+      _rateLimitTimer?.cancel();
+      _rateLimitTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (_rateLimitSecondsRemaining <= 1) {
+          timer.cancel();
+          if (mounted) {
+            setState(() {
+              _rateLimitSecondsRemaining = 0;
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _rateLimitSecondsRemaining--;
+            });
+          }
+        }
+      });
+    }
+  }
+
+  Future<void> _handleRateLimitError() async {
+    await RateLimitManager.setRateLimitLockout();
+    await _checkRateLimitLockout();
+  }
+
+  String _formatRateLimitDuration(int totalSeconds) {
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   // Helper function to mask the email (e.g., ja***es@gmail.com)
@@ -1423,10 +1793,14 @@ class _VerificationPageState extends State<VerificationPage> {
   Future<void> _verifyCode() async {
     final code = _codeController.text.trim();
 
-    if (code.length != 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter the 6-digit code')),
-      );
+    if (code.length != 6 && code.length != 8) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Please enter a valid verification code'),
+          ),
+        );
       return;
     }
 
@@ -1444,12 +1818,14 @@ class _VerificationPageState extends State<VerificationPage> {
 
       // If successful, navigate to Dashboard
       if (res.session != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Email verified! Welcome to FinSight.'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Email verified! Welcome to FinSight.'),
+              backgroundColor: Colors.green,
+            ),
+          );
 
         final userName =
             (res.user?.userMetadata?['full_name'] as String?) ??
@@ -1463,40 +1839,55 @@ class _VerificationPageState extends State<VerificationPage> {
       }
     } on AuthException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+        );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   Future<void> _resendCode() async {
+    if (_secondsRemaining > 0 || _rateLimitSecondsRemaining > 0) return;
+
     try {
       await Supabase.instance.client.auth.resend(
         type: OtpType.signup,
         email: widget.email,
       );
+      _startCooldown();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('A new code has been sent to your email.'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('A new code has been sent to your email.'),
+            backgroundColor: Colors.green,
+          ),
+        );
     } catch (e) {
+      if (e is AuthException &&
+          e.message.toLowerCase().contains('rate limit')) {
+        await _handleRateLimitError();
+      }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error resending code: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Error resending code: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
     }
   }
 
@@ -1547,21 +1938,58 @@ class _VerificationPageState extends State<VerificationPage> {
               ),
               const SizedBox(height: 40),
 
+              if (_rateLimitSecondsRemaining > 0)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 20),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.red.shade700,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Rate limit reached. Please wait ${_formatRateLimitDuration(_rateLimitSecondsRemaining)} before trying again.',
+                          style: TextStyle(
+                            color: Colors.red.shade800,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               // The Code Input Field
               TextField(
                 controller: _codeController,
                 keyboardType: TextInputType.number,
-                maxLength: 6,
+                maxLength: 8,
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  fontSize: 32,
+                  fontSize: 28,
                   fontWeight: FontWeight.bold,
-                  letterSpacing: 16,
+                  letterSpacing: 12,
                 ),
                 decoration: InputDecoration(
                   counterText: "", // Hides the character counter
-                  hintText: '000000',
-                  hintStyle: TextStyle(color: Colors.grey.withOpacity(0.3)),
+                  hintText: 'Enter Code',
+                  hintStyle: TextStyle(
+                    color: Colors.grey.withOpacity(0.3),
+                    fontSize: 20,
+                    letterSpacing: 0,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
                   ),
@@ -1573,11 +2001,6 @@ class _VerificationPageState extends State<VerificationPage> {
                     ),
                   ),
                 ),
-                onChanged: (value) {
-                  if (value.length == 6) {
-                    _verifyCode();
-                  }
-                },
               ),
               const SizedBox(height: 32),
 
@@ -1586,7 +2009,9 @@ class _VerificationPageState extends State<VerificationPage> {
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: _isLoading ? null : _verifyCode,
+                  onPressed: _isLoading || _rateLimitSecondsRemaining > 0
+                      ? null
+                      : _verifyCode,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF634DFF),
                     shape: RoundedRectangleBorder(
@@ -1615,16 +2040,32 @@ class _VerificationPageState extends State<VerificationPage> {
                     "Didn't receive the code? ",
                     style: TextStyle(color: Colors.grey),
                   ),
-                  GestureDetector(
-                    onTap: _resendCode,
-                    child: const Text(
-                      'Resend',
-                      style: TextStyle(
-                        color: Color(0xFF634DFF),
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
+                  _secondsRemaining > 0
+                      ? Text(
+                          'Resend in ${_secondsRemaining}s',
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        )
+                      : _rateLimitSecondsRemaining > 0
+                      ? const Text(
+                          'Resend disabled',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        )
+                      : GestureDetector(
+                          onTap: _resendCode,
+                          child: const Text(
+                            'Resend',
+                            style: TextStyle(
+                              color: Color(0xFF634DFF),
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
                 ],
               ),
             ],
@@ -1647,31 +2088,130 @@ class ResetPasswordVerificationPage extends StatefulWidget {
 
 class _ResetPasswordVerificationPageState
     extends State<ResetPasswordVerificationPage> {
-  final _formKey = GlobalKey<FormState>();
   final _codeController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
-
   bool _isLoading = false;
-  bool _obscurePassword = true;
-  bool _obscureConfirmPassword = true;
+  Timer? _cooldownTimer;
+  int _secondsRemaining = 60;
+  Timer? _rateLimitTimer;
+  int _rateLimitSecondsRemaining = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _startCooldown();
+    _checkRateLimitLockout();
+  }
 
   @override
   void dispose() {
     _codeController.dispose();
-    _passwordController.dispose();
-    _confirmPasswordController.dispose();
+    _cooldownTimer?.cancel();
+    _rateLimitTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _verifyAndResetPassword() async {
-    if (!_formKey.currentState!.validate()) return;
+  void _startCooldown() {
+    setState(() {
+      _secondsRemaining = 60;
+    });
+    _cooldownTimer?.cancel();
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_secondsRemaining == 0) {
+        timer.cancel();
+      } else {
+        if (mounted) {
+          setState(() {
+            _secondsRemaining--;
+          });
+        }
+      }
+    });
+  }
 
-    final code = _codeController.text.trim();
-    if (code.length != 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter the 6-digit code')),
+  Future<void> _checkRateLimitLockout() async {
+    final remaining = await RateLimitManager.getRemainingLockoutSeconds();
+    if (remaining > 0) {
+      if (mounted) {
+        setState(() {
+          _rateLimitSecondsRemaining = remaining;
+        });
+      }
+      _rateLimitTimer?.cancel();
+      _rateLimitTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (_rateLimitSecondsRemaining <= 1) {
+          timer.cancel();
+          if (mounted) {
+            setState(() {
+              _rateLimitSecondsRemaining = 0;
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _rateLimitSecondsRemaining--;
+            });
+          }
+        }
+      });
+    }
+  }
+
+  Future<void> _handleRateLimitError() async {
+    await RateLimitManager.setRateLimitLockout();
+    await _checkRateLimitLockout();
+  }
+
+  String _formatRateLimitDuration(int totalSeconds) {
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _resendCode() async {
+    if (_secondsRemaining > 0 || _rateLimitSecondsRemaining > 0) return;
+
+    try {
+      await Supabase.instance.client.auth.resend(
+        type: OtpType.recovery,
+        email: widget.email,
       );
+      _startCooldown();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('A new code has been sent to your email.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+    } catch (e) {
+      if (e is AuthException &&
+          e.message.toLowerCase().contains('rate limit')) {
+        await _handleRateLimitError();
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Error resending code: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+    }
+  }
+
+  Future<void> _verifyCode() async {
+    final code = _codeController.text.trim();
+    if (code.length != 6 && code.length != 8) {
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Please enter a valid verification code'),
+          ),
+        );
       return;
     }
 
@@ -1688,46 +2228,293 @@ class _ResetPasswordVerificationPageState
       if (!mounted) return;
 
       if (res.session != null) {
-        // 2. Update password since user is now logged in
-        await Supabase.instance.client.auth.updateUser(
-          UserAttributes(password: _passwordController.text),
+        // Navigate to the set new password page since session is now active
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => CreateNewPasswordPage(email: widget.email),
+          ),
         );
+      }
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+        );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
 
-        if (!mounted) return;
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black),
+      ),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Icon
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF634DFF).withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.lock_reset,
+                  color: Color(0xFF634DFF),
+                  size: 48,
+                ),
+              ),
+              const SizedBox(height: 24),
 
-        ScaffoldMessenger.of(context).showSnackBar(
+              // Titles
+              const Text(
+                'Verify Reset',
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Enter the 6-digit code sent to\n${widget.email}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.grey,
+                  height: 1.5,
+                  fontSize: 16,
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              if (_rateLimitSecondsRemaining > 0)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 20),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.red.shade700,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Rate limit reached. Please wait ${_formatRateLimitDuration(_rateLimitSecondsRemaining)} before trying again.',
+                          style: TextStyle(
+                            color: Colors.red.shade800,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // OTP Field
+              TextField(
+                controller: _codeController,
+                keyboardType: TextInputType.number,
+                maxLength: 8,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 12,
+                ),
+                decoration: InputDecoration(
+                  counterText: "",
+                  hintText: 'Enter Code',
+                  hintStyle: TextStyle(
+                    color: Colors.grey.withOpacity(0.3),
+                    fontSize: 20,
+                    letterSpacing: 0,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: const BorderSide(
+                      color: Color(0xFF634DFF),
+                      width: 2,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // Verify Button
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton(
+                  onPressed: _isLoading || _rateLimitSecondsRemaining > 0
+                      ? null
+                      : _verifyCode,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF634DFF),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: _isLoading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text(
+                          'Verify Code',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // Resend Link
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    "Didn't receive the code? ",
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                  _secondsRemaining > 0
+                      ? Text(
+                          'Resend in ${_secondsRemaining}s',
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        )
+                      : _rateLimitSecondsRemaining > 0
+                      ? const Text(
+                          'Resend disabled',
+                          style: TextStyle(
+                            color: Colors.grey,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        )
+                      : GestureDetector(
+                          onTap: _resendCode,
+                          child: const Text(
+                            'Resend',
+                            style: TextStyle(
+                              color: Color(0xFF634DFF),
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CreateNewPasswordPage extends StatefulWidget {
+  final String email;
+
+  const CreateNewPasswordPage({super.key, required this.email});
+
+  @override
+  State<CreateNewPasswordPage> createState() => _CreateNewPasswordPageState();
+}
+
+class _CreateNewPasswordPageState extends State<CreateNewPasswordPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _updatePassword() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      // 2. Update password since user is now logged in via recovery session
+      final res = await Supabase.instance.client.auth.updateUser(
+        UserAttributes(password: _passwordController.text),
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
           const SnackBar(
             content: Text('Password updated successfully! Welcome back.'),
             backgroundColor: Colors.green,
           ),
         );
 
-        final userName =
-            (res.user?.userMetadata?['full_name'] as String?) ??
-            widget.email.split('@').first;
+      final userName =
+          (res.user?.userMetadata?['full_name'] as String?) ??
+          widget.email.split('@').first;
 
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (context) => HomePage(userName: userName)),
-          (route) => false,
-        );
-      }
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => HomePage(userName: userName)),
+        (route) => false,
+      );
     } on AuthException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message), backgroundColor: Colors.red),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(content: Text(e.message), backgroundColor: Colors.red),
+        );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // Helper method to build label
   Widget _buildLabel(String label) {
     return Align(
       alignment: Alignment.centerLeft,
@@ -1763,7 +2550,7 @@ class _ResetPasswordVerificationPageState
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(
-                    Icons.lock_reset,
+                    Icons.vpn_key,
                     color: Color(0xFF634DFF),
                     size: 48,
                   ),
@@ -1772,49 +2559,20 @@ class _ResetPasswordVerificationPageState
 
                 // Titles
                 const Text(
-                  'Reset Password',
+                  'Set New Password',
                   style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  'Enter the 6-digit code sent to\n${widget.email}',
+                const Text(
+                  'Please enter your new password below.',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.grey,
                     height: 1.5,
                     fontSize: 16,
                   ),
                 ),
                 const SizedBox(height: 32),
-
-                // OTP Field
-                TextField(
-                  controller: _codeController,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 16,
-                  ),
-                  decoration: InputDecoration(
-                    counterText: "",
-                    hintText: '000000',
-                    hintStyle: TextStyle(color: Colors.grey.withOpacity(0.3)),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(
-                        color: Color(0xFF634DFF),
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
 
                 // New Password Field
                 _buildLabel('New Password'),
@@ -1887,7 +2645,7 @@ class _ResetPasswordVerificationPageState
                   width: double.infinity,
                   height: 56,
                   child: ElevatedButton(
-                    onPressed: _isLoading ? null : _verifyAndResetPassword,
+                    onPressed: _isLoading ? null : _updatePassword,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF634DFF),
                       shape: RoundedRectangleBorder(
@@ -1897,7 +2655,7 @@ class _ResetPasswordVerificationPageState
                     child: _isLoading
                         ? const CircularProgressIndicator(color: Colors.white)
                         : const Text(
-                            'Reset Password',
+                            'Update Password',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 18,

@@ -2,6 +2,7 @@ import 'main.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -45,6 +46,11 @@ class _ProfilePageState extends State<ProfilePage> {
 
     try {
       await Supabase.instance.client.auth.signOut();
+      try {
+        await GoogleSignIn().disconnect();
+      } catch (_) {
+        // Ignore disconnect errors if not signed in with Google
+      }
 
       if (!mounted) return;
 
@@ -56,7 +62,7 @@ class _ProfilePageState extends State<ProfilePage> {
     } catch (e) {
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)..clearSnackBars()..showSnackBar(
         SnackBar(
           content: Text('Error logging out: $e'),
           backgroundColor: Colors.red,
@@ -129,7 +135,7 @@ class _ProfilePageState extends State<ProfilePage> {
       if (!mounted) return;
       setState(() => _userName = newName);
 
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)..clearSnackBars()..showSnackBar(
         const SnackBar(
           content: Text('Name updated successfully!'),
           backgroundColor: Colors.green,
@@ -137,7 +143,7 @@ class _ProfilePageState extends State<ProfilePage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)..clearSnackBars()..showSnackBar(
         SnackBar(
           content: Text('Error updating name: $e'),
           backgroundColor: Colors.red,
@@ -234,7 +240,7 @@ class _ProfilePageState extends State<ProfilePage> {
       );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)..clearSnackBars()..showSnackBar(
         const SnackBar(
           content: Text('Password updated successfully!'),
           backgroundColor: Colors.green,
@@ -242,7 +248,7 @@ class _ProfilePageState extends State<ProfilePage> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(context)..clearSnackBars()..showSnackBar(
         SnackBar(
           content: Text('Error updating password: $e'),
           backgroundColor: Colors.red,
